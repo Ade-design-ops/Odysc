@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Odysc | Student Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="#home" aria-label="Odysc home"><span class="mark">✦</span> odysc</a><nav aria-label="Main navigation"><a href="#discover">Discover</a><a href="#applications">Applications</a><a href="#events">Events</a></nav><span class="demo-label">Student demo</span></header>
+  <main id="home" class="container">
+    <section class="hero"><p class="eyebrow">YOUR USC COMMUNITY STARTS HERE</p><h1>Find your people.<br><em>Find your path.</em></h1><p>Explore student organizations, save your favorites, and keep your applications in one place.</p><a class="primary-link" href="#discover">Explore clubs →</a></section>
+    <section class="stats" aria-label="Dashboard overview"><div><strong id="clubCount">0</strong><span>Clubs to explore</span></div><div><strong id="savedCount">0</strong><span>Saved clubs</span></div><div><strong id="applicationCount">0</strong><span>Applications started</span></div></section>
+    <section id="discover" class="section"><div class="section-heading"><div><p class="eyebrow">DISCOVER</p><h2>Explore clubs</h2></div><p class="hint">Sample recommendations, not live AI matches</p></div><div class="controls"><label class="search-label" for="search">Search clubs</label><input id="search" type="search" placeholder="Search by club name or interest…" autocomplete="off"><label class="search-label" for="category">Filter by category</label><select id="category"><option value="all">All categories</option><option value="Engineering">Engineering</option><option value="Creative">Creative</option><option value="Community">Community</option><option value="Business">Business</option></select></div><div id="clubGrid" class="club-grid" aria-live="polite"></div><p id="emptyState" class="empty" hidden>No clubs match your search. Try a different keyword or category.</p></section>
+    <section id="applications" class="section"><div class="section-heading"><div><p class="eyebrow">YOUR PROGRESS</p><h2>Applications</h2></div></div><p class="hint">Select “Start application” on a club card to add it to your tracker. This demo does not submit real applications.</p><div id="applicationList" class="application-list" aria-live="polite"></div></section>
+    <section id="events" class="section"><div class="section-heading"><div><p class="eyebrow">WHAT'S NEXT</p><h2>Events & deadlines</h2></div></div><div class="notice"><strong>Coming soon</strong><p>Your team can connect verified club events and application deadlines here. No live event information is shown in this demo.</p></div></section>
+  </main>
+  <footer>Odysc · Student dashboard prototype · Built for a USC hackathon</footer>
+</body>
+</html>
