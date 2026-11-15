@@ -4,8 +4,9 @@ The local prototype was checked through its student and NSBE administrator flows
 
 ## Verification results
 
-- **147 automated tests passed**, with no failures or skips.
+- **166 automated tests passed**, with no failures or skips.
 - Backend TypeScript build and frontend production build passed.
+- Event-editing follow-up verified prefilled fields, cancellation, required-location validation, location-only saves preserving the exact timestamp/duration, and title/type/date/time/duration saves. Supabase readback and the public event API returned the edited details with the same ID and creator. The dedicated test event was removed afterward.
 - **20 live shared-workflow groups passed** using actual PostgreSQL store operations. Synthetic users, profiles, memberships, applications, settings, reviews, bookings, and events were rolled back.
 - Live USC profile ownership and access-policy verification passed with rolled-back fixtures.
 - Browser walkthroughs checked profile autosave and completion, tags, actual PDF upload, suggestion review/keep/apply, directory search and filters, add/remove club, application overview/questions/review/edit, calendar navigation/agenda/visibility, event selection/removal, map controls, account menus, USC email validation, recovery safeguards, and officer tabs/forms.
@@ -29,10 +30,10 @@ Tests do not establish real email delivery or external provider integration. Cha
 | Common applications | Draft answers, profile review, submission, immutable snapshots, status tracking, duplicate prevention, deadline/question checks, explicit USC-ID consent, and opt-in saved-answer reuse are implemented. Zero-question submissions are prototype interest records. Club questions/deadlines must be configured separately because the editing screen is missing. |
 | Officer review | Approved club membership, applicant selection, blind display, rubric scores/team averages, source-grounded summaries, and administrator decisions work. Final accepted/rejected outcomes are intentional final states; unsupported Undo controls were removed. |
 | Team membership | Pending officer requests at initial registration, administrator reviewer invitations/approval/removal, and permission restrictions are implemented. Invitations are records inside Odysc, not emails. First-admin setup remains an operator task. |
-| Club events | Administrators publish info sessions, mixers, workshops, and coffee chats with time/building/room; students view them and add them to calendars. Publishing was verified end-to-end in the previous event walkthrough; current API/database/form checks pass. No event edit/delete screen or endpoint exists yet. |
+| Club events | Administrators publish and edit info sessions, mixers, workshops, and coffee chats, including title, type, date/time, duration, building, and room. Edits update the same event ID so calendar selections stay attached. Prefill/cancel/validation, real save/readback, and changed map destinations passed. Cancellation/deletion is not implemented. Existing downloaded ICS files must be downloaded/imported again after changes. |
 | Interviews | Administrators offer slots with an existing video-meeting link or in-person location; students book/change/cancel slots. Booking conflicts, ownership, final-decision restrictions, and booking reset on invitation edits are checked. Automatic meeting creation is not connected. |
 | Student calendar | Personal events, month/agenda views, event add/remove, calendar visibility/colors, overflow-day agenda, and ICS downloads are implemented. Personal-event storage and preferences were exercised in live rollback checks; browser validation and representative controls were exercised directly. |
-| Campus maps | Interactive 2D/3D building maps, re-center controls, and Google/Apple Maps links. Online 2D/3D/re-center controls passed. This is a map view, not AR navigation or a hologram. |
+| Campus maps | Interactive 2D/3D building maps, re-center controls, and Google/Apple Maps links. The catalog now includes 31 verified University Park buildings shared by the event dropdown and backend. Geometry checks cover all 31 anchors; rendered checks cover the original eight and representative additions, alongside 2D/3D/re-center controls. The SCA anchor was corrected. This is a map view, not AR navigation or a hologram. |
 | Deadline reminders | A preference can be saved when a deadline exists. Automatic email, push, and SMS delivery are not implemented. Exported calendar files contain calendar alarms. |
 
 ## Corrections made during this audit
@@ -54,7 +55,7 @@ Tests do not establish real email delivery or external provider integration. Cha
 2. A club application/page editor for questions, deadlines, contacts, and other recruitment information. Backend settings support exists; current Settings exposes only USC-ID requests and provider placeholders.
 3. Odysc-wide officer verification, a trusted officer roster connection if USC provides one, admin promotion/transfer screens, and multi-club officer switching.
 4. An existing-student screen for requesting officer access. The backend request endpoint exists; selecting officer during an existing student's repeated signup is not a complete conversion flow.
-5. Event editing/cancellation/deletion.
+5. Event cancellation/deletion.
 6. A configured AI provider or the AI teammate's production service, with live model evaluation. Current local extraction/matching and extractive summaries are prototype behavior.
 7. Scheduled reminder and invitation/booking notification delivery.
 8. Zoom/Teams/Meet OAuth and automatic meeting creation.

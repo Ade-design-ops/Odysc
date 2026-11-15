@@ -39,6 +39,7 @@ All browser requests include `credentials:'include'`. Private requests also send
 | `GET /api/clubs` | Real shared directory plus actual club settings; unknown facts remain unknown |
 | `GET /api/events` | Actual shared club events, possibly empty |
 | `POST /api/events` | Club administrator only; real event details |
+| `PATCH /api/events/:eventId` | Active administrator of the persisted event's club; partial event edits preserve IDs/calendar selections |
 | `POST /api/ai/match` | Own optional `studentId` → matches with scores 0–1; another identity is rejected |
 | `POST /api/ai/parse-resume` | Actual multipart PDF in `resume` → extracted suggestions, resume metadata, `needsReview:true` |
 | `GET /api/me/resume` | Own private PDF |

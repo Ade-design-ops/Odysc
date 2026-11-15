@@ -9,6 +9,7 @@ import { SupabaseGateway } from "./supabase.js";
 import type { SupabaseCatalogService } from "./supabase-catalog.js";
 import { WebAuthService } from "./web-auth.js";
 import { FrontendStore } from "./frontend-store.js";
+import { BUILDINGS } from "./campus-buildings.js";
 import {
   clubSettingsSchema,
   emailSchema,
@@ -69,6 +70,23 @@ const providerSession = z
   })
   .passthrough();
 const uuid = z.string().uuid();
+// Keep published locations within the buildings supported by the campus map.
+const eventFields = {
+  title: z.string().trim().min(1).max(200),
+  kind: z.enum(["Info session", "Mixer", "Workshop", "Coffee chat"]),
+  start: z.string().datetime({ offset: true }),
+  durationMin: z.number().int().min(5).max(1440),
+  buildingCode: z.string().trim().min(1).max(30).refine(
+    (code) => Object.hasOwn(BUILDINGS, code),
+    "Choose a verified USC campus building.",
+  ),
+  room: z.string().trim().min(1).max(100),
+};
+const createEventSchema = z.object({ clubId: idSchema, ...eventFields }).strict();
+const updateEventSchema = z.object(eventFields).partial().strict().refine(
+  (patch) => Object.keys(patch).length > 0,
+  "Send at least one event field to update.",
+);
 const secured = { schema: { tags: ["Frontend integration"] } };
 const limited = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
 /** Compatibility contract for the existing client; all identity comes from Supabase. */
@@ -217,23 +235,22 @@ export async function registerFrontendBackend(
   app.get("/api/events", secured, async () => store.events());
   app.post("/api/events", secured, async (request, reply) => {
     const identity = await actor(request);
-    const body = validated(
-      z
-        .object({
-          clubId: idSchema,
-          title: z.string().trim().min(1).max(200),
-          kind: z.enum(["Info session", "Mixer", "Workshop", "Coffee chat"]),
-          start: z.string().datetime({ offset: true }),
-          durationMin: z.number().int().min(5).max(1440),
-          buildingCode: z.string().trim().min(1).max(30),
-          room: z.string().trim().min(1).max(100),
-        })
-        .strict(),
-      request.body,
-    );
+    const body = validated(createEventSchema, request.body);
     const event = await store.createEvent(identity, body);
     return reply.code(201).send(event);
   });
+  app.patch<{ Params: { eventId: string } }>(
+    "/api/events/:eventId",
+    secured,
+    async (request) => {
+      const identity = await actor(request);
+      return store.updateEvent(
+        identity,
+        validated(uuid, request.params.eventId),
+        validated(updateEventSchema, request.body),
+      );
+    },
+  );
   app.post("/api/ai/match", { ...secured, ...limited }, async (request) => {
     const identity = await actor(request);
     const body = validated(

@@ -26,9 +26,11 @@ import { WebAuthService } from "../src/web-auth.js";
 import type { ResumeFiles } from "../src/resume-files.js";
 import type { SupabaseCatalogService } from "../src/supabase-catalog.js";
 import { mapDirectoryClub } from "../src/supabase-catalog.js";
+import { BUILDINGS } from "../src/campus-buildings.js";
 const studentId = "11111111-1111-4111-8111-111111111111";
 const otherId = "22222222-2222-4222-8222-222222222222";
 const appId = "33333333-3333-4333-8333-333333333333";
+const eventId = "55555555-5555-4555-8555-555555555555";
 const at = "2026-11-14T12:00:00.000Z";
 const actor: Actor = {
   user: {
@@ -109,6 +111,17 @@ function databaseFixture(now?: () => number) {
     insertedApp: undefined as Row | undefined,
     rollbacks: 0,
     remembered: new Map<string, {prompt:string;answer:string}>(),
+    event: {
+      id: eventId,
+      club_id: "1",
+      title: "Robotics workshop",
+      kind: "Workshop",
+      starts_at: new Date("2026-01-15T18:34:56.789Z"),
+      duration_min: 60,
+      building_code: "TCC",
+      room: "101",
+      created_by: otherId,
+    } as Row | null,
   };
   const execute: SqlConnection["query"] = async <T extends Row>(
     sql: string,
@@ -126,6 +139,16 @@ function databaseFixture(now?: () => number) {
       rows = [profile];
     else if (sql.startsWith("SELECT club_id FROM public.clubs"))
       rows = [{ club_id: "1" }];
+    else if (sql.startsWith("SELECT club_id::text FROM public.odysc_club_events"))
+      rows = state.event?.id === values[0] ? [{ club_id: state.event.club_id }] : [];
+    else if (sql.startsWith("UPDATE public.odysc_club_events")) {
+      if (state.event?.id === values[0] && state.event.club_id === values[7]) {
+        for (const [index, key] of ["title", "kind", "starts_at", "duration_min", "building_code", "room"].entries()) {
+          if (values[index + 1] !== null) state.event[key] = values[index + 1];
+        }
+        rows = [state.event];
+      }
+    }
     else if (sql.startsWith("SELECT data FROM public.odysc_club_settings"))
       rows = Object.keys(state.settings).length
         ? [{ data: state.settings }]
@@ -133,7 +156,7 @@ function databaseFixture(now?: () => number) {
     else if (sql.startsWith("SELECT id::text,club_id::text,user_id::text")) {
       const matching = state.membership && (sql.includes("WHERE user_id=$1::uuid")
         ? state.membership.user_id===values[0] && (!sql.includes("email=lower($2::text)") || state.membership.email===String(values[1]).toLowerCase())
-        : !sql.includes("AND user_id=$2::uuid") || (state.membership.user_id===values[1] && state.membership.email===String(values[2]).toLowerCase()));
+        : !sql.includes("AND user_id=$2::uuid") || (state.membership.club_id===values[0] && state.membership.user_id===values[1] && state.membership.email===String(values[2]).toLowerCase() && state.membership.status==="active"));
       rows = matching ? [state.membership as unknown as Row] : [];
     }
     else if (
@@ -254,6 +277,65 @@ test("reviewers cannot invite teammates or change club settings", async () => {
     ),
     false,
   );
+});
+test("event edits preserve the persisted club, creator and untouched timestamp while updating only supplied fields", async () => {
+  const { store, state, calls } = databaseFixture();
+  state.membership = member("admin");
+
+  const updated = await store.updateEvent(actor, eventId, { title: "Updated workshop", room: "202" });
+
+  assert.deepEqual(updated, {
+    id: eventId, clubId: "1", title: "Updated workshop", kind: "Workshop",
+    start: "2026-01-15T18:34:56.789Z", durationMin: 60, buildingCode: "TCC", room: "202",
+  });
+  assert.equal(state.event?.created_by, otherId);
+  const write = calls.find((call) => call.sql.startsWith("UPDATE public.odysc_club_events"))!;
+  assert.deepEqual(write.values, [eventId, "Updated workshop", null, null, null, null, "202", "1"]);
+  assert.doesNotMatch(write.sql.split(" WHERE ")[0]!, /created_by|club_id\s*=/);
+  const lock = calls.findIndex((call) => call.sql.startsWith("SELECT club_id FROM public.clubs"));
+  const membership = calls.findIndex((call) => call.sql.includes("AND user_id=$2::uuid"));
+  assert.ok(lock >= 0 && lock < membership, "membership revocation shares the club lock");
+  assert.equal(state.rollbacks, 0);
+});
+test("event edits require active administrator membership in the actual persisted event club", async () => {
+  for (const membership of [
+    null,
+    member("reviewer"),
+    { ...member("admin"), club_id: "2" },
+    { ...member("admin"), status: "pending" as const },
+    { ...member("admin"), user_id: otherId },
+    { ...member("admin"), email: "old-address@usc.edu" },
+  ]) {
+    const { store, state, calls } = databaseFixture();
+    state.membership = membership;
+    await assert.rejects(
+      store.updateEvent(actor, eventId, { room: "202" }),
+      (error) => error instanceof HttpError && error.statusCode === 403,
+    );
+    assert.equal(calls.some((call) => call.sql.startsWith("UPDATE public.odysc_club_events")), false);
+    assert.equal(state.event?.room, "101");
+    assert.equal(state.rollbacks, 1);
+  }
+});
+test("event edits reject missing events and unverified current actors without changing data", async () => {
+  const missing = databaseFixture();
+  missing.state.membership = member("admin");
+  missing.state.event = null;
+  await assert.rejects(
+    missing.store.updateEvent(actor, eventId, { room: "202" }),
+    (error) => error instanceof HttpError && error.statusCode === 404,
+  );
+  assert.equal(missing.calls.some((call) => call.sql.startsWith("UPDATE public.odysc_club_events")), false);
+
+  const unverified = databaseFixture();
+  unverified.state.membership = member("admin");
+  unverified.state.eligible = false;
+  await assert.rejects(
+    unverified.store.updateEvent(actor, eventId, { room: "202" }),
+    (error) => error instanceof HttpError && error.statusCode === 401,
+  );
+  assert.equal(unverified.calls.length, 1);
+  assert.equal(unverified.state.event?.room, "101");
 });
 test("workspace writes reject forged application statuses, roles, teams and saved-answer records", () => {
   for (const body of [
@@ -457,6 +539,11 @@ async function apiFixture(
     identity: Actor;
     input: Parameters<FrontendStore["createEvent"]>[1];
   }[] = [];
+  const eventUpdates: {
+    identity: Actor;
+    eventId: string;
+    patch: Parameters<FrontendStore["updateEvent"]>[2];
+  }[] = [];
   const store = {
     async close() {},
     async getSession() {
@@ -491,6 +578,16 @@ async function apiFixture(
       if (options.eventError) throw options.eventError;
       eventCalls.push({ identity, input });
       return { id: "55555555-5555-4555-8555-555555555555", ...input };
+    },
+    async updateEvent(
+      identity: Actor,
+      id: string,
+      patch: Parameters<FrontendStore["updateEvent"]>[2],
+    ) {
+      privateCalls++;
+      if (options.eventError) throw options.eventError;
+      eventUpdates.push({ identity, eventId: id, patch });
+      return { id, clubId: "1", title: "Robotics workshop", kind: "Workshop", start: at, durationMin: 60, buildingCode: "TCC", room: "101", ...patch };
     },
   } as unknown as FrontendStore;
   const app = Fastify({ logger: false });
@@ -531,6 +628,7 @@ async function apiFixture(
     app,
     providerCalls,
     eventCalls,
+    eventUpdates,
     get privateCalls() {
       return privateCalls;
     },
@@ -577,6 +675,10 @@ test("event publishing requires authentication and validates location details be
   for (const invalid of [
     { ...payload, room: "  \t " },
     { ...payload, buildingCode: " \n " },
+    { ...payload, buildingCode: "UNKNOWN" },
+    { ...payload, buildingCode: "constructor" },
+    { ...payload, buildingCode: "toString" },
+    { ...payload, buildingCode: "__proto__" },
     { ...payload, title: " " },
     { ...payload, start: "not-a-date" },
     { ...payload, createdBy: otherId },
@@ -624,6 +726,27 @@ test("event publishing forwards the verified actor and trimmed club event, retur
     ...fixture.eventCalls[0]!.input,
   });
 });
+test("event publishing and editing accept additional verified campus buildings from the shared catalog", async (t) => {
+  const originalCodes = new Set(["RTH", "SAL", "TCC", "SGM", "SCA", "DML", "LVL", "THH"]);
+  const buildingCode = Object.keys(BUILDINGS).find((code) => !originalCodes.has(code));
+  assert.ok(buildingCode, "the verified building catalog extends the original eight locations");
+  const fixture = await apiFixture(t);
+  const headers = { authorization: "Bearer test-token" };
+  const created = await fixture.app.inject({
+    method: "POST", url: "/api/events", headers,
+    payload: {
+      clubId: "1", title: "Campus workshop", kind: "Workshop", start: at,
+      durationMin: 60, buildingCode, room: "101",
+    },
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  assert.equal(fixture.eventCalls[0]!.input.buildingCode, buildingCode);
+  const updated = await fixture.app.inject({
+    method: "PATCH", url: `/api/events/${eventId}`, headers, payload: { buildingCode },
+  });
+  assert.equal(updated.statusCode, 200, updated.body);
+  assert.equal(fixture.eventUpdates[0]!.patch.buildingCode, buildingCode);
+});
 test("event publishing preserves the store's administrator denial", async (t) => {
   const fixture = await apiFixture(t, {
     eventError: new HttpError(403, "A club administrator is required.", "FORBIDDEN"),
@@ -645,6 +768,77 @@ test("event publishing preserves the store's administrator denial", async (t) =>
   assert.equal(response.statusCode, 403);
   assert.equal(response.json().error.code, "FORBIDDEN");
   assert.equal(fixture.eventCalls.length, 0);
+});
+test("event editing requires a current authenticated actor before forwarding a mutation", async (t) => {
+  const fixture = await apiFixture(t);
+  const anonymous = await fixture.app.inject({
+    method: "PATCH", url: `/api/events/${eventId}`, payload: { room: "202" },
+  });
+  assert.equal(anonymous.statusCode, 401);
+  const stale = await fixture.app.inject({
+    method: "PATCH", url: `/api/events/${eventId}`,
+    headers: { authorization: "Bearer test-token", "x-odysc-actor": otherId },
+    payload: { room: "202" },
+  });
+  assert.equal(stale.statusCode, 409);
+  assert.equal(stale.json().error.code, "SESSION_CHANGED");
+  assert.equal(fixture.privateCalls, 0);
+  assert.equal(fixture.eventUpdates.length, 0);
+});
+test("event editing rejects malformed, empty or immutable-field patches", async (t) => {
+  const fixture = await apiFixture(t);
+  const headers = { authorization: "Bearer test-token" };
+  for (const payload of [
+    {}, { clubId: "2" }, { created_by: otherId }, { id: otherId },
+    { title: " " }, { kind: "Other" }, { start: "not-a-date" },
+    { durationMin: 4 }, { durationMin: 60.5 }, { durationMin: 1441 },
+    { buildingCode: "UNKNOWN" }, { buildingCode: "constructor" }, { buildingCode: "toString" },
+    { buildingCode: "__proto__" }, { buildingCode: " " }, { room: " \t " },
+  ]) {
+    const response = await fixture.app.inject({
+      method: "PATCH", url: `/api/events/${eventId}`, headers, payload,
+    });
+    assert.equal(response.statusCode, 400, response.body);
+  }
+  const invalidId = await fixture.app.inject({
+    method: "PATCH", url: "/api/events/not-a-uuid", headers, payload: { room: "202" },
+  });
+  assert.equal(invalidId.statusCode, 400);
+  assert.equal(fixture.privateCalls, 0);
+  assert.equal(fixture.eventUpdates.length, 0);
+});
+test("event editing forwards only the trimmed partial fields and returns the updated event", async (t) => {
+  const fixture = await apiFixture(t);
+  const response = await fixture.app.inject({
+    method: "PATCH", url: `/api/events/${eventId}`,
+    headers: { authorization: "Bearer test-token", "x-odysc-actor": studentId },
+    payload: { title: " Updated workshop ", buildingCode: " SAL ", room: " 202 " },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(fixture.eventUpdates.length, 1);
+  const update = fixture.eventUpdates[0]!;
+  assert.equal(update.identity.user.id, studentId);
+  assert.equal(update.identity.user.email, actor.user.email);
+  assert.equal(update.eventId, eventId);
+  assert.deepEqual(update.patch, { title: "Updated workshop", buildingCode: "SAL", room: "202" });
+  assert.equal(response.json().id, eventId);
+  assert.equal(response.json().clubId, "1");
+  assert.equal(response.json().start, at);
+  assert.equal(response.json().title, "Updated workshop");
+});
+test("event editing preserves administrator denials and missing-event responses", async (t) => {
+  for (const [status, code] of [[403, "CLUB_ACCESS_REQUIRED"], [404, "NOT_FOUND"]] as const) {
+    const fixture = await apiFixture(t, {
+      eventError: new HttpError(status, "Event unavailable for this account.", code),
+    });
+    const response = await fixture.app.inject({
+      method: "PATCH", url: `/api/events/${eventId}`,
+      headers: { authorization: "Bearer test-token" }, payload: { room: "202" },
+    });
+    assert.equal(response.statusCode, status);
+    assert.equal(response.json().error.code, code);
+    assert.equal(fixture.eventUpdates.length, 0);
+  }
 });
 test("officer signup cannot assign itself an administrator role and only creates a pending request", async (t) => {
   const fixture = await apiFixture(t);

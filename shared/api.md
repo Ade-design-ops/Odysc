@@ -15,6 +15,7 @@ All browser requests send `credentials:'include'`. Private requests also send `X
 | `GET /api/workspace`, `PATCH /api/workspace` | Personal workspace; updates may include `expectedVersion` |
 | `GET /api/clubs` | Real directory/settings `Club[]` |
 | `GET /api/events`, `POST /api/events` | Actual club events; creation requires an active club administrator and returns 201. Browser writes include `X-Odysc-Actor`. |
+| `PATCH /api/events/:eventId` | Nonempty partial `{title,kind,start,durationMin,buildingCode,room}` → full persisted `ClubEvent` (200). Active administrator of that event's club required; `id` and `clubId` cannot change. |
 | `POST /api/ai/match` | Own optional `{studentId}` → `Match[]`, scores 0–1; another identity is rejected |
 | `POST /api/ai/parse-resume` | Actual multipart PDF in field `resume` → suggestions, resume metadata, `needsReview:true` |
 | `GET /api/me/resume` | Own private PDF binary |
@@ -34,3 +35,7 @@ The eight shared workflow tables are applied. Browser clients have no Data API g
 No video-provider OAuth, automatic meeting creation, or booking/notification email delivery is claimed. Video offers require a real HTTPS meeting link. Matching may use heuristic fallback, and applicant summaries are source-grounded. Auth inbox delivery/SMTP and deployed callback redirects still require verification. See [frontend integration](../docs/FRONTEND_INTEGRATION.md).
 
 Club administrators publish events from **Club dashboard → Events → Publish event**. The form sends `{clubId,title,kind,start,durationMin,buildingCode,room}`; `start` is an ISO timestamp converted from the device-local date/time shown in the form. Students can find the saved event on the club page and add it to their personal calendar. Personal calendar events remain separate from published club events.
+
+An active administrator can edit an existing event through `api.updateEvent(eventId, patch)` / `updateClubEvent(eventId, patch)`. The PATCH body includes only changed editable fields; `start` remains an ISO timestamp with an offset, and field validation matches creation. Event building codes come from the same [31-building campus catalog](../docs/CAMPUS_BUILDINGS.md) used by the dropdown and map. The server checks the event's persisted club and current membership. Missing events return 404, unauthorized edits return 403, and stale browser actors return 409. Failed edits leave the displayed event unchanged.
+
+Successful edits update the same event row and ID. The client replaces that event in its shared list, so existing RSVP/calendar selections stay attached and show the updated title, time and location. Other signed-in clients receive the updated event through the normal directory refresh/poll. Edits do not clear those selections or send notification emails. Previously downloaded `.ics` files are independent snapshots and must be downloaded/imported again to receive changes.

@@ -139,6 +139,28 @@ test('event publication posts the real event with the expected actor while event
   assert.equal(new Headers(calls[1]!.options.headers).has('x-odysc-actor'), false);
 });
 
+test('event editing sends only the partial update to an encoded event path with the expected actor', async t => {
+  const patch = { title: 'Updated NSBE info session', start: '2026-11-16T02:00:00.000Z', room: '202' };
+  const persisted = { id: 'event/id ?#', clubId: '36288', kind: 'Info session', durationMin: 60, buildingCode: 'SAL', ...patch };
+  const calls = fixture(t, () => Response.json(persisted));
+  const actor = '11111111-1111-4111-8111-111111111111';
+  setApiActor(actor);
+  assert.deepEqual(await api.updateEvent(persisted.id, patch), persisted);
+  assert.equal(calls[0]!.url, '/api/events/event%2Fid%20%3F%23');
+  assert.equal(calls[0]!.options.method, 'PATCH');
+  assert.deepEqual(body(calls[0]!), patch);
+  assert.equal('clubId' in body(calls[0]!), false, 'editing never supplies a replacement club');
+  assert.equal('id' in body(calls[0]!), false, 'editing retains the existing event ID');
+  assert.equal(new Headers(calls[0]!.options.headers).get('content-type'), 'application/json');
+  assert.equal(new Headers(calls[0]!.options.headers).get('x-odysc-actor'), actor);
+});
+
+test('event edit authorization failures reject without returning a fabricated updated event', async t => {
+  fixture(t, () => Response.json({ error: { code: 'ORGANIZER_ACCESS_REQUIRED', message: 'An active club administrator is required.' } }, { status: 403 }));
+  setApiActor('11111111-1111-4111-8111-111111111111');
+  await assert.rejects(api.updateEvent('server-event-id', { room: '202' }), error => error instanceof ApiError && error.status === 403 && error.code === 'ORGANIZER_ACCESS_REQUIRED');
+});
+
 
 test('late private responses cannot cross into another signed-in account, including logout', async t => {
   let release!: (response: Response) => void;

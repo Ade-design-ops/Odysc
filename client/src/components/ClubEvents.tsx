@@ -20,10 +20,17 @@ type EventDraft = {
   building: string;
   room: string;
 };
+const draftFor = (event?: ClubEvent): EventDraft => {
+  if (!event) return { title: "", kind: "Info session", date: "", time: "", duration: "60", building: "", room: "" };
+  const stamp = localDateTime(new Date(event.start));
+  return { title: event.title, kind: event.kind, date: stamp.slice(0, 10), time: stamp.slice(11, 16), duration: String(event.durationMin), building: event.buildingCode, room: event.room };
+};
 
 export default function ClubEvents({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
   const { events, clubById } = useApp();
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<ClubEvent | null>(null);
+  const returnFocus = useRef<HTMLButtonElement | null>(null);
   const [notice, setNotice] = useState("");
   const publishButton = useRef<HTMLButtonElement>(null);
   const club = clubById(clubId);
@@ -31,7 +38,8 @@ export default function ClubEvents({ clubId, isAdmin }: { clubId: string; isAdmi
   const clubEvents = events.filter((event) => event.clubId === clubId).sort((a, b) => a.start.localeCompare(b.start));
   const close = () => {
     setCreating(false);
-    requestAnimationFrame(() => publishButton.current?.focus());
+    setEditing(null);
+    requestAnimationFrame(() => (returnFocus.current?.isConnected ? returnFocus.current : publishButton.current)?.focus());
   };
 
   return (
@@ -41,22 +49,30 @@ export default function ClubEvents({ clubId, isAdmin }: { clubId: string; isAdmi
           <h2 id="club-events-heading" className="h3">Club events</h2>
           <p className="subtle">Published events appear on {club.shortName}'s club page for students to find.</p>
         </div>
-        {isAdmin && <button ref={publishButton} className="btn primary" onClick={() => { setNotice(""); setCreating(true); }}>Publish event</button>}
+        {isAdmin && <button ref={publishButton} className="btn primary" onClick={(event) => { returnFocus.current = event.currentTarget; setNotice(""); setEditing(null); setCreating(true); }}>Publish event</button>}
       </div>
       {notice && <p className="alert ok" role="status">{notice}</p>}
-      {!isAdmin && <p className="hint">Club administrators can publish events. You can view the current events below.</p>}
-      <EventList club={club} events={clubEvents} />
-      {creating && isAdmin && <PublishEventModal clubName={club.name} onClose={close} onPublished={() => {
-        setNotice("Event published. Students can find it on your club page.");
+      {!isAdmin && <p className="hint">Club administrators can publish and edit events. You can view the current events below.</p>}
+      <EventList club={club} events={clubEvents} onEdit={isAdmin ? (event, trigger) => {
+        returnFocus.current = trigger;
+        setNotice("");
+        setCreating(false);
+        setEditing(event);
+      } : undefined} />
+      {(creating || editing) && isAdmin && <EventModal key={editing?.id ?? "new"} event={editing ?? undefined} clubName={club.name} onClose={close} onSaved={() => {
+        setNotice(editing ? "Event updated. The latest details are saved for students on your club page and in-app calendars." : "Event published. Students can find it on your club page.");
         close();
       }} />}
     </section>
   );
 }
 
-function PublishEventModal({ clubName, onClose, onPublished }: { clubName: string; onClose: () => void; onPublished: () => void }) {
-  const { createClubEvent } = useApp();
-  const [draft, setDraft] = useState<EventDraft>({ title: "", kind: "Info session", date: "", time: "", duration: "60", building: "", room: "" });
+function EventModal({ event: existing, clubName, onClose, onSaved }: { event?: ClubEvent; clubName: string; onClose: () => void; onSaved: () => void }) {
+  const { createClubEvent, updateClubEvent } = useApp();
+  const [draft, setDraft] = useState<EventDraft>(() => draftFor(existing));
+  const initial = draftFor(existing);
+  const unchanged = !!existing && JSON.stringify(draft) === JSON.stringify(initial);
+  const durations = existing && !DURATIONS.includes(existing.durationMin) ? [...DURATIONS, existing.durationMin].sort((a, b) => a - b) : DURATIONS;
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -82,6 +98,7 @@ function PublishEventModal({ clubName, onClose, onPublished }: { clubName: strin
     const room = draft.room.trim();
     const stamp = `${draft.date}T${draft.time}`;
     const start = new Date(`${stamp}:00`);
+    const changedStart = !existing || draft.date !== initial.date || draft.time !== initial.time;
     const durationMin = Number(draft.duration);
     if (!title || title.length > 200) next.title = "Enter an event title of 1–200 characters.";
     if (!KINDS.includes(draft.kind)) next.kind = "Choose an event type.";
@@ -89,7 +106,7 @@ function PublishEventModal({ clubName, onClose, onPublished }: { clubName: strin
     if (!draft.time) next.time = "Choose the start time.";
     if (draft.date && draft.time) {
       if (!Number.isFinite(start.getTime()) || localDateTime(start) !== stamp) next.time = "Choose a valid date and start time in your device's time zone.";
-      else if (start.getTime() <= Date.now()) next.time = "Choose a future event date and start time.";
+      else if (changedStart && start.getTime() <= Date.now()) next.time = "Choose a future event date and start time.";
     }
     if (!Number.isInteger(durationMin) || durationMin < 5 || durationMin > 1440) next.duration = "Choose a duration between 5 and 1,440 minutes.";
     if (!BUILDINGS[draft.building]) next.building = "Choose a campus building.";
@@ -104,10 +121,23 @@ function PublishEventModal({ clubName, onClose, onPublished }: { clubName: strin
     setPending(true);
     form.current?.focus();
     try {
-      await createClubEvent({ title, kind: draft.kind, start: start.toISOString(), durationMin, buildingCode: draft.building, room });
-      onPublished();
+      if (existing) {
+        // Omit unchanged fields so location edits keep the original timestamp
+        // (including seconds and ambiguous daylight-saving offsets).
+        const patch: Partial<Omit<ClubEvent, "id" | "clubId">> = {};
+        if (title !== existing.title) patch.title = title;
+        if (draft.kind !== existing.kind) patch.kind = draft.kind;
+        if (changedStart) patch.start = start.toISOString();
+        if (durationMin !== existing.durationMin) patch.durationMin = durationMin;
+        if (draft.building !== existing.buildingCode) patch.buildingCode = draft.building;
+        if (room !== existing.room) patch.room = room;
+        if (Object.keys(patch).length) await updateClubEvent(existing.id, patch);
+      } else {
+        await createClubEvent({ title, kind: draft.kind, start: start.toISOString(), durationMin, buildingCode: draft.building, room });
+      }
+      onSaved();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "The event could not be published. Please try again.");
+      setError(failure instanceof Error ? failure.message : `The event could not be ${existing ? "updated" : "published"}. Please try again.`);
     } finally {
       inFlight.current = false;
       setPending(false);
@@ -133,11 +163,11 @@ function PublishEventModal({ clubName, onClose, onPublished }: { clubName: strin
     <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !inFlight.current) onClose(); }}>
       <form ref={form} className="modal iv-modal" role="dialog" aria-modal="true" aria-labelledby="club-event-dialog-title" aria-describedby="club-event-publish-note" tabIndex={-1} onKeyDown={keyboard} onSubmit={submit} noValidate aria-busy={pending}>
         <div className="modal-head">
-          <h2 id="club-event-dialog-title" className="h3">Publish a club event</h2>
+          <h2 id="club-event-dialog-title" className="h3">{existing ? "Edit club event" : "Publish a club event"}</h2>
           <button type="button" className="icon-btn" onClick={() => { if (!inFlight.current) onClose(); }} aria-label="Close event form" disabled={pending}>×</button>
         </div>
         <div className="modal-body stack">
-          <p id="club-event-publish-note" className="subtle">Publish this <strong>{draft.kind.toLowerCase()}</strong> for <strong>{clubName}</strong>. Students will see these details on your club page.</p>
+          <p id="club-event-publish-note" className="subtle">{existing ? "Update" : "Publish"} this <strong>{draft.kind.toLowerCase()}</strong> for <strong>{clubName}</strong>. Students will see these details on your club page.</p>
           <p id="club-event-time-zone" className="hint">Dates and times use your device's time zone: {zone}.</p>
           <fieldset className="plain" disabled={pending}>
             <div className="stack">
@@ -157,13 +187,13 @@ function PublishEventModal({ clubName, onClose, onPublished }: { clubName: strin
                 <div>
                   <label className="field" htmlFor="club-event-duration">Duration <span className="req">*</span></label>
                   <select id="club-event-duration" className="input" value={draft.duration} onChange={(event) => set("duration", event.target.value)} {...aria("duration")}>
-                    {DURATIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
+                    {durations.map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
                   </select>
                   {fieldError("duration")}
                 </div>
                 <div>
                   <label className="field" htmlFor="club-event-date">Event date <span className="req">*</span></label>
-                  <input id="club-event-date" type="date" className="input" value={draft.date} min={localDateTime(new Date()).slice(0, 10)} onChange={(event) => set("date", event.target.value)} {...aria("date")} />
+                  <input id="club-event-date" type="date" className="input" value={draft.date} min={existing ? undefined : localDateTime(new Date()).slice(0, 10)} onChange={(event) => set("date", event.target.value)} {...aria("date")} />
                   {fieldError("date")}
                 </div>
                 <div>
@@ -190,7 +220,7 @@ function PublishEventModal({ clubName, onClose, onPublished }: { clubName: strin
           {error && <p className="field-error" role="alert">{error}</p>}
           <div className="row between wrap">
             <button type="button" className="btn ghost" onClick={() => { if (!inFlight.current) onClose(); }} disabled={pending}>Cancel</button>
-            <button type="submit" className="btn primary" disabled={pending}>{pending ? "Publishing…" : "Publish event"}</button>
+            <button type="submit" className="btn primary" disabled={pending || unchanged}>{pending ? (existing ? "Saving…" : "Publishing…") : (existing ? "Save changes" : "Publish event")}</button>
           </div>
         </div>
       </form>

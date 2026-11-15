@@ -18,7 +18,7 @@ function downloadIcs(e: ClubEvent, clubName: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function EventList({ club, events }: { club: Club; events: ClubEvent[] }) {
+export function EventList({ club, events, onEdit }: { club: Club; events: ClubEvent[]; onEdit?: (event: ClubEvent, trigger: HTMLButtonElement) => void }) {
   const [open, setOpen] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState("");
   const list = events.filter((e) => e.clubId === club.id).sort((a, b) => a.start.localeCompare(b.start));
@@ -39,6 +39,7 @@ export function EventList({ club, events }: { club: Club; events: ClubEvent[] })
                 <div className="subtle">{e.kind} · {fmtDate(e.start)}, {fmtTime(e.start)} · {e.room}</div>
               </div>
               <div className="row" style={{ gap: 6 }}>
+                {onEdit && <button className="btn sm" onClick={(click) => onEdit(e, click.currentTarget)} aria-label={`Edit ${e.title}`}>Edit</button>}
                 <CalButton id={e.id} />
                 <button className="btn sm ghost" onClick={() => { try { downloadIcs(e, club.shortName); setDownloadError(""); } catch (error) { setDownloadError(error instanceof Error ? error.message : "The calendar file could not be downloaded."); } }} aria-label={`Download ${e.title} as .ics`} title="Download .ics for Google, Apple or Outlook">.ics</button>
                 <button className="btn sm" onClick={() => setOpen(open === e.id ? null : e.id)} aria-expanded={open === e.id}>

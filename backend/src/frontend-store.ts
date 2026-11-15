@@ -39,6 +39,15 @@ export interface FrontendStoreOptions {
   database?: FrontendDatabase;
   now?: () => number;
 }
+export interface FrontendEventInput {
+  clubId: string;
+  title: string;
+  kind: string;
+  start: string;
+  durationMin: number;
+  buildingCode: string;
+  room: string;
+}
 const campusDateFormat = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/Los_Angeles",
   year: "numeric",
@@ -1122,15 +1131,7 @@ export class FrontendStore {
   }
   createEvent(
     actor: Actor,
-    input: {
-      clubId: string;
-      title: string;
-      kind: string;
-      start: string;
-      durationMin: number;
-      buildingCode: string;
-      room: string;
-    },
+    input: FrontendEventInput,
   ) {
     return this.actor(actor, async (q) => {
       await this.member(q, actor, input.clubId, true);
@@ -1148,6 +1149,49 @@ export class FrontendStore {
         ],
       );
       return { id: result.rows[0]!.id, ...input };
+    });
+  }
+  updateEvent(
+    actor: Actor,
+    eventId: string,
+    patch: Partial<Omit<FrontendEventInput, "clubId">>,
+  ) {
+    return this.actor(actor, async (q) => {
+      // Event details are public, but membership is checked before acquiring or
+      // changing an event row. The club lock serializes membership revocation.
+      const existing = await q.query<{ club_id: string }>(
+        "SELECT club_id::text FROM public.odysc_club_events WHERE id=$1::uuid",
+        [eventId],
+      );
+      const event = existing.rows[0];
+      if (!event) throw notFound();
+      await this.lockClub(q, event.club_id);
+      await this.member(q, actor, event.club_id, true);
+      const result = await q.query(
+        "UPDATE public.odysc_club_events SET title=COALESCE($2::text,title),kind=COALESCE($3::text,kind),starts_at=COALESCE($4::timestamptz,starts_at),duration_min=COALESCE($5::smallint,duration_min),building_code=COALESCE($6::text,building_code),room=COALESCE($7::text,room) WHERE id=$1::uuid AND club_id=$8::bigint RETURNING id::text,club_id::text,title,kind,starts_at,duration_min,building_code,room",
+        [
+          eventId,
+          patch.title ?? null,
+          patch.kind ?? null,
+          patch.start ?? null,
+          patch.durationMin ?? null,
+          patch.buildingCode ?? null,
+          patch.room ?? null,
+          event.club_id,
+        ],
+      );
+      const updated = result.rows[0];
+      if (!updated) throw notFound();
+      return {
+        id: updated.id,
+        clubId: updated.club_id,
+        title: updated.title,
+        kind: updated.kind,
+        start: iso(updated.starts_at),
+        durationMin: updated.duration_min,
+        buildingCode: updated.building_code,
+        room: updated.room,
+      };
     });
   }
 }

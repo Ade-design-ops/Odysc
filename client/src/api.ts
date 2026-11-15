@@ -160,6 +160,7 @@ export const api = {
   clubs: () => request<Club[]>("/clubs"),
   events: () => request<ClubEvent[]>("/events"),
   createEvent: (input: Omit<ClubEvent, "id">) => request<ClubEvent>("/events", "POST", input),
+  updateEvent: (eventId: string, patch: Partial<Omit<ClubEvent, "id" | "clubId">>) => request<ClubEvent>(`/events/${encodeURIComponent(eventId)}`, "PATCH", patch),
   myApplications: () => request<Application[]>("/applications/mine"),
   matches: (_studentId?: string) => request<Match[]>("/ai/match", "POST", {}),
   parseResume: (file: File) => {

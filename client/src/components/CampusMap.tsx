@@ -3,9 +3,10 @@
 // pulsing gold pin; directions hand off to Google Maps / Apple Maps.
 // MapLibre is loaded on demand so it doesn't weigh down the rest of the app.
 import { useEffect, useRef, useState } from "react";
-import type { Map as MLMap } from "maplibre-gl";
+import type { FillExtrusionLayerSpecification, GeoJSONSource, Map as MLMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { BUILDINGS, TOMMY_TROJAN, appleMapsUrl, googleMapsUrl } from "../data/buildings";
+import { selectBuildingHighlight } from "../map-footprint";
 
 const STYLE = "https://tiles.openfreemap.org/styles/positron";
 const PITCH = 58;
@@ -66,45 +67,79 @@ export default function CampusMap({ code, room, title, when }: { code: string; r
 
           // 3D campus: every footprint extruded, gold-tinted by height.
           m.setLight({ anchor: "viewport", color: "#ffffff", intensity: 0.3 });
+          const neutralPaint: FillExtrusionLayerSpecification["paint"] = {
+            "fill-extrusion-color": ["interpolate", ["linear"], ["coalesce", ["get", "render_height"], 8], 0, "#f7efe2", 25, "#f0e3c8", 60, "#e8d29f"],
+            "fill-extrusion-height": ["coalesce", ["get", "render_height"], 8],
+            "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
+            "fill-extrusion-opacity": 0.95,
+          };
           m.addLayer({
             id: "odysc-3d",
             type: "fill-extrusion",
             source: "openmaptiles",
             "source-layer": "building",
             minzoom: 14,
-            paint: {
-              "fill-extrusion-color": ["interpolate", ["linear"], ["coalesce", ["get", "render_height"], 8], 0, "#f7efe2", 25, "#f0e3c8", 60, "#e8d29f"],
-              "fill-extrusion-height": ["coalesce", ["get", "render_height"], 8],
-              "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
-              "fill-extrusion-opacity": 0.95,
-            },
+            paint: neutralPaint,
           });
 
           const intro = () =>
             m.flyTo({ center: [b.lng, b.lat], zoom: 16.9, pitch: PITCH, bearing: -28, duration: reduce ? 0 : 2800, essential: true });
           if (!reduce) intro();
 
-          // Light up the event's building once tiles are in.
+          // Light up the whole selected building, replacing its neutral mesh.
+          // Keep grouped neighbors in a separate neutral source: one provider ID
+          // can represent dozens of disconnected campus buildings.
+          let previousHighlight = "";
+          const retainedGroups = new Map<string, ReturnType<MLMap["querySourceFeatures"]>[number]>();
           const highlight = () => {
-            if (cancelled || !m.getLayer("odysc-3d") || m.getLayer("odysc-hi")) return;
-            const hits = m.queryRenderedFeatures(m.project([b.lng, b.lat]), { layers: ["odysc-3d"] });
-            const f = hits[0];
-            if (f?.id === undefined) return;
-            // Hide the plain copy of this building so the red one doesn't flicker against it.
-            m.setFilter("odysc-3d", ["!=", ["id"], f.id]);
-            m.addLayer({
-              id: "odysc-hi",
-              type: "fill-extrusion",
-              source: "openmaptiles",
-              "source-layer": "building",
-              filter: ["==", ["id"], f.id],
-              paint: {
-                "fill-extrusion-color": "#990000",
-                "fill-extrusion-height": ["+", ["coalesce", ["get", "render_height"], 8], 1.5],
-                "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
-                "fill-extrusion-opacity": 0.95,
-              },
-            });
+            if (cancelled || !m.getLayer("odysc-3d")) return;
+            const loaded = m.querySourceFeatures("openmaptiles", { sourceLayer: "building" });
+            const selection = selectBuildingHighlight([...loaded, ...retainedGroups.values()], [b.lng, b.lat]);
+            if (!selection) {
+              if (previousHighlight) {
+                previousHighlight = "";
+                m.setFilter("odysc-3d", null);
+                const empty = { type: "FeatureCollection" as const, features: [] };
+                (m.getSource("odysc-building-remainder") as GeoJSONSource | undefined)?.setData(empty);
+                (m.getSource("odysc-selected-building") as GeoJSONSource | undefined)?.setData(empty);
+              }
+              return;
+            }
+            // Retain copies of the replaced groups while panning between tiles,
+            // and restore any newly loaded neighbors that share their IDs.
+            for (const feature of loaded) {
+              if (feature.id !== undefined && selection.excludedIds.includes(feature.id)) {
+                retainedGroups.set(JSON.stringify([feature.id, feature.geometry, feature.properties]), feature);
+              }
+            }
+            const signature = JSON.stringify(selection);
+            if (signature === previousHighlight) return;
+            previousHighlight = signature;
+            const sourceOptions = { maxzoom: m.getSource("openmaptiles")?.maxzoom ?? 14, tolerance: 0 };
+            const remainder = m.getSource("odysc-building-remainder") as GeoJSONSource | undefined;
+            if (remainder) remainder.setData(selection.neutralRemainder);
+            else {
+              m.addSource("odysc-building-remainder", { type: "geojson", data: selection.neutralRemainder, ...sourceOptions });
+              m.addLayer({ id: "odysc-building-remainder", type: "fill-extrusion", source: "odysc-building-remainder", minzoom: 14, paint: neutralPaint });
+            }
+            const selected = m.getSource("odysc-selected-building") as GeoJSONSource | undefined;
+            if (selected) selected.setData(selection.footprint);
+            else {
+              m.addSource("odysc-selected-building", { type: "geojson", data: selection.footprint, ...sourceOptions });
+              m.addLayer({
+                id: "odysc-hi",
+                type: "fill-extrusion",
+                source: "odysc-selected-building",
+                minzoom: 14,
+                paint: {
+                  "fill-extrusion-color": "#990000",
+                  "fill-extrusion-height": ["+", ["coalesce", ["get", "render_height"], 8], 1.5],
+                  "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
+                  "fill-extrusion-opacity": 0.95,
+                },
+              });
+            }
+            m.setFilter("odysc-3d", ["!", ["in", ["id"], ["literal", selection.excludedIds]]]);
           };
           m.on("idle", highlight);
 
