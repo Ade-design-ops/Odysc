@@ -1,0 +1,338 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Odysc | Student Portal</title>
+
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.9.0/dist/maplibre-gl.css"
+  >
+
+  <link rel="stylesheet" href="style.css">
+
+  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.9.0/dist/maplibre-gl.js"></script>
+
+  <script src="script.js" defer></script>
+</head>
+
+<body>
+  <header class="mobile-top">
+    <a href="#dashboard" class="brand">✦ odysc</a>
+    <button id="menuToggle" type="button"
+      aria-expanded="false"
+      aria-controls="sidebar">☰ Menu</button>
+  </header>
+
+  <div class="shell">
+    <aside id="sidebar" class="sidebar">
+      <a href="#dashboard" class="brand desktop-brand">✦ odysc</a>
+      <p class="side-label">STUDENT PORTAL</p>
+      <nav id="sideNav" aria-label="Main navigation">
+        <a href="#dashboard" data-page="dashboard">▦ Dashboard</a>
+        <a href="#profile" data-page="profile">◉ My Profile</a>
+        <a href="#common-app" data-page="common-app">▤ Common Application</a>
+        <a href="#discover" data-page="discover">⌕ Discover Clubs</a>
+        <a href="#applications" data-page="applications">☷ My Applications</a>
+        <a href="#navigator" data-page="navigator">⌖ Campus Navigator</a>
+        <a href="#events" data-page="events">▣ Events</a>
+      </nav>
+      <div class="side-bottom">
+        <span class="pill">Student demo</span>
+        <p>Prototype only · Not affiliated with USC</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="page-top">
+        <div>
+          <span class="eyebrow">ODYSC STUDENT PORTAL</span>
+          <h1 id="pageTitle">Dashboard</h1>
+        </div>
+        <span class="pill">Mock data · No real submissions</span>
+      </div>
+
+      <!-- DASHBOARD -->
+      <section class="page" id="dashboard">
+        <div class="welcome">
+          <div>
+            <p class="eyebrow gold">YOUR CAMPUS JOURNEY</p>
+            <h2>One profile.<br>Every opportunity.</h2>
+            <p>Complete your Common Application, discover clubs, and find your next meeting.</p>
+            <button class="gold-button" data-go="common-app">
+              Continue my application →
+            </button>
+          </div>
+          <div class="welcome-decoration" aria-hidden="true">✦</div>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric">
+            <strong id="dashProgress">0%</strong>
+            <span>Application completion</span>
+          </article>
+          <article class="metric">
+            <strong id="dashApps">0</strong>
+            <span>Club applications started</span>
+          </article>
+          <article class="metric">
+            <strong id="dashSaved">0</strong>
+            <span>Saved clubs</span>
+          </article>
+        </div>
+
+        <div class="two-col">
+          <article class="panel">
+            <div class="section-head">
+              <h3>My Common Application</h3>
+              <span class="pill">Draft</span>
+            </div>
+            <p class="muted">Complete your reusable profile and answers before applying to clubs.</p>
+            <div class="progress"><div id="dashProgressBar"></div></div>
+            <button class="outline-button" data-go="common-app">
+              Open application →
+            </button>
+          </article>
+          <article class="panel">
+            <h3>Getting started</h3>
+            <ol class="steps">
+              <li>Fill out your student profile</li>
+              <li>Complete the Common Application</li>
+              <li>Add clubs and answer supplements</li>
+              <li>Find club meetings on the campus map</li>
+            </ol>
+          </article>
+        </div>
+
+        <article class="panel">
+          <div class="section-head">
+            <h3>Upcoming events</h3>
+            <button class="text-button" data-go="events">View all →</button>
+          </div>
+          <div id="dashboardEvents"></div>
+        </article>
+      </section>
+
+      <!-- STUDENT PROFILE -->
+      <section class="page" id="profile" hidden>
+        <div class="intro">
+          <h2>My student profile</h2>
+          <p>Enter your information once to reuse across club applications. Information is saved only in this browser for this demo.</p>
+        </div>
+        <form id="profileForm" class="panel form-grid">
+          <label>Full name
+            <input name="fullName" autocomplete="name" placeholder="Your name">
+          </label>
+          <label>USC email (demo only)
+            <input name="email" type="email" placeholder="name@usc.edu">
+          </label>
+          <label>Major
+            <input name="major" placeholder="e.g. Mechanical Engineering">
+          </label>
+          <label>Graduation year
+            <select name="year">
+              <option value="">Select a year</option>
+              <option>2026</option>
+              <option>2027</option>
+              <option>2028</option>
+              <option>2029</option>
+              <option>2030</option>
+            </select>
+          </label>
+          <label class="wide">Interests (comma-separated)
+            <input name="interests" placeholder="Robotics, service, filmmaking">
+          </label>
+          <label class="wide">Skills (comma-separated)
+            <input name="skills" placeholder="Python, design, public speaking">
+          </label>
+          <label class="wide">Experience
+            <textarea name="experience" rows="4"
+              placeholder="Tell clubs about your projects, activities, and experience"></textarea>
+          </label>
+          <div class="wide form-actions">
+            <button type="submit" class="primary-button">Save profile</button>
+            <span id="profileStatus" role="status" class="muted"></span>
+          </div>
+        </form>
+      </section>
+
+      <!-- COMMON APPLICATION -->
+      <section class="page" id="common-app" hidden>
+        <div class="intro">
+          <h2>Common Application</h2>
+          <p>A single reusable application with editable answers. Each club may have additional questions.</p>
+        </div>
+        <article class="panel">
+          <div class="section-head">
+            <strong id="stepLabel">Step 1 of 3</strong>
+            <span id="appPercent">0% complete</span>
+          </div>
+          <div class="progress"><div id="appProgressBar"></div></div>
+          <div class="step-pills">
+            <span data-step-label="0">1. Background</span>
+            <span data-step-label="1">2. Your story</span>
+            <span data-step-label="2">3. Review</span>
+          </div>
+
+          <form id="commonForm">
+            <div class="form-step" data-step="0">
+              <h3>Background & interests</h3>
+              <p class="muted">Your profile information is shared across applications only in this prototype.</p>
+              <label>Why do you want to join a student organization?
+                <textarea name="motivation" rows="5"
+                  placeholder="What motivates you to get involved?"></textarea>
+              </label>
+              <label>What kind of community are you looking for?
+                <textarea name="community" rows="5"
+                  placeholder="Describe your interests and goals"></textarea>
+              </label>
+            </div>
+
+            <div class="form-step" data-step="1" hidden>
+              <h3>Your experiences</h3>
+              <label>Tell us about a meaningful project or experience
+                <textarea name="project" rows="6"
+                  placeholder="What did you do and what did you learn?"></textarea>
+              </label>
+              <label>What would you contribute to a club?
+                <textarea name="contribution" rows="6"
+                  placeholder="Share your skills, ideas, or perspective"></textarea>
+              </label>
+            </div>
+
+            <div class="form-step" data-step="2" hidden>
+              <h3>Review your application</h3>
+              <p class="muted">Review your answers before adding club-specific supplements. This is not a real submission.</p>
+              <div id="reviewContent" class="review"></div>
+            </div>
+
+            <div class="form-actions">
+              <button type="button" id="prevStep" class="outline-button">← Previous</button>
+              <button type="button" id="saveCommon" class="outline-button">Save draft</button>
+              <button type="button" id="nextStep" class="primary-button">Next →</button>
+              <span id="commonStatus" role="status" class="muted"></span>
+            </div>
+          </form>
+        </article>
+      </section>
+
+      <!-- DISCOVER CLUBS -->
+      <section class="page" id="discover" hidden>
+        <div class="intro">
+          <h2>Discover organizations</h2>
+          <p>Browse fictional example clubs. AI recommendations are not connected yet.</p>
+        </div>
+        <div class="filter-row">
+          <label class="sr-only" for="search">Search clubs</label>
+          <input id="search" type="search"
+            placeholder="Search by club name or interest...">
+          <label class="sr-only" for="category">Category</label>
+          <select id="category">
+            <option value="all">All categories</option>
+            <option>Engineering</option>
+            <option>Creative</option>
+            <option>Community</option>
+            <option>Business</option>
+          </select>
+        </div>
+        <div id="clubGrid" class="club-grid" aria-live="polite"></div>
+        <p id="emptyState" class="panel" hidden>
+          No clubs match your search.
+        </p>
+      </section>
+
+      <!-- MY APPLICATIONS -->
+      <section class="page" id="applications" hidden>
+        <div class="intro">
+          <h2>My club applications</h2>
+          <p>Track draft applications and answer club-specific supplemental questions. No submissions are sent.</p>
+        </div>
+        <div id="applicationList" class="stack" aria-live="polite"></div>
+      </section>
+
+      <!-- CAMPUS NAVIGATOR -->
+      <section class="page" id="navigator" hidden>
+        <div class="intro">
+          <h2>Campus Navigator</h2>
+          <p>Choose a sample event to spotlight its approximate destination. The preview route is illustrative, not verified walking directions.</p>
+        </div>
+
+        <div class="map-layout">
+          <article class="panel">
+            <label for="mapEvent">Choose an event</label>
+            <select id="mapEvent"></select>
+
+            <div class="event-details" id="mapDetails"
+              aria-live="polite"></div>
+
+            <a id="mapDirections"
+              class="primary-button link-button"
+              target="_blank"
+              rel="noopener noreferrer"
+              href="https://maps.google.com">
+              Open Google Maps directions ↗
+            </a>
+
+            <p class="fineprint">
+              Directions use a general building destination,
+              not a verified entrance or room.
+              Confirm event details with the organizer.
+            </p>
+          </article>
+
+          <article class="panel map-panel">
+            <div class="map-head">
+              <strong>Interactive campus map</strong>
+              <span class="pill">2D / 3D preview</span>
+            </div>
+
+            <div class="map-toolbar">
+              <button type="button" id="map2d"
+                class="map-mode active">2D Map</button>
+
+              <button type="button" id="map3d"
+                class="map-mode">Tilted View</button>
+
+              <button type="button" id="mapReset"
+                class="map-mode">Reset View</button>
+            </div>
+
+            <div id="realCampusMap"
+              role="region"
+              aria-label="Interactive USC campus map">
+            </div>
+
+            <p id="mapStatus" role="status" class="fineprint">
+              Loading USC campus map...
+            </p>
+
+            <p class="fineprint">
+              Building heights and demo destination coordinates
+              are approximate. Verify locations and use Google
+              Maps for walking directions.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- EVENTS -->
+      <section class="page" id="events" hidden>
+        <div class="intro">
+          <h2>Events & deadlines</h2>
+          <p>Sample events only. Dates, times, organizations, and meeting rooms below are fictional placeholders.</p>
+        </div>
+        <div id="eventList" class="stack"></div>
+      </section>
+
+      <footer>
+        Odysc · Hackathon prototype · Fictional clubs and events ·
+        Local browser storage only
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
