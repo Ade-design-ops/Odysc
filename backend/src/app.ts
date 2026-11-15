@@ -28,6 +28,7 @@ export interface AppOptions {
   corsOrigins?: string[];
   webAuth?: WebAuthOptions;
   frontend?: false | { dbUrl?: string; caFile?: string; store?: FrontendStore };
+  frontendDistDirectory?: string | false;
 }
 export async function buildApp(options: AppOptions = {}) {
   const backend = options.store ? 'sqlite' : options.backend ?? process.env.DATABASE_BACKEND ?? 'supabase';
@@ -70,7 +71,13 @@ export async function buildApp(options: AppOptions = {}) {
   await app.register(swaggerUi, { routePrefix: '/docs', uiConfig: { persistAuthorization: false } });
   app.get('/health', { schema: { tags: ['System'] } }, () => ({ status: 'ok', service: 'odysc-backend', backend }));
   app.get('/openapi.json', { schema: { hide: true } }, () => app.swagger());
-  app.get('/', { schema: { hide: true } }, () => ({ name: 'odysc API', docs: '/docs', health: '/health' }));
+  const frontendDirectory = options.frontendDistDirectory ?? process.env.FRONTEND_DIST_DIRECTORY;
+  if (frontendDirectory) {
+    const { registerStaticSite } = await import('./static-site.js');
+    await registerStaticSite(app, frontendDirectory);
+  } else {
+    app.get('/', { schema: { hide: true } }, () => ({ name: 'odysc API', docs: '/docs', health: '/health' }));
+  }
   if (backend === 'supabase') {
     const configuration = options.supabase ?? {
       url: process.env.SUPABASE_URL ?? '', publishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? '',

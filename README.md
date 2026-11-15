@@ -141,3 +141,7 @@ docker run --rm -p 3001:3001 -e HOST=0.0.0.0 \
 ```
 
 The database CA is mounted read-only, and the data volume preserves private resume files. Student profiles remain centralized in Supabase. Keep credentials in the local environment or hosting secret store, and run one backend instance while resume storage remains local.
+
+## Deploy the website
+
+The root Dockerfile serves the built frontend and backend from one origin. See [deployment setup](docs/DEPLOYMENT.md) for hosting, persistent private résumé storage, runtime secrets, and Supabase callback configuration. GitHub Pages alone cannot run the backend.
