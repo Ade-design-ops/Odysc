@@ -2,7 +2,7 @@
 // Microsoft Teams, Google Meet, or in person). The student books one time in OdySC.
 // Video meetings use an organizer-supplied HTTPS URL. Invitations and bookings are
 // saved on the server; no provider connection or email delivery is implied.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { Club, Interview, InterviewFormat } from "../../../shared/types";
 import { BUILDINGS } from "../data/buildings";
 import { useApp } from "../store";
@@ -49,6 +49,25 @@ export function ScheduleModal({ appId, clubId, name, existing, onClose, onSent }
   const [tried, setTried] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const inFlight = useRef(false);
+  const form = useRef<HTMLFormElement>(null);
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "device local time";
+  const close = () => { if (!inFlight.current) onClose(); };
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    form.current?.querySelector<HTMLInputElement>("input:not(:disabled)")?.focus();
+    return () => { if (previous?.isConnected) previous.focus(); };
+  }, []);
+  const keyboard = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (event.key === "Escape") { event.preventDefault(); close(); return; }
+    if (event.key !== "Tab") return;
+    const fields = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href]')).filter((field) => field.getClientRects().length > 0);
+    const first = fields[0];
+    const last = fields[fields.length - 1];
+    if (!first || !last) { event.preventDefault(); event.currentTarget.focus(); }
+    else if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && (document.activeElement === last || document.activeElement === event.currentTarget)) { event.preventDefault(); first.focus(); }
+  };
 
   const now = local(new Date());
   const errs: Record<string, string> = {};
@@ -62,12 +81,14 @@ export function ScheduleModal({ appId, clubId, name, existing, onClose, onSent }
 
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pending) return;
+    if (inFlight.current) return;
     setTried(true);
     if (Object.keys(errs).length) return;
     if (clean.some((slot) => new Date(slot).getTime() <= Date.now())) return setError("One of these times has passed. Offer a future time.");
+    inFlight.current = true;
     setPending(true);
     setError("");
+    form.current?.focus();
     try {
       await scheduleInterview({
         applicationId: appId,
@@ -82,19 +103,19 @@ export function ScheduleModal({ appId, clubId, name, existing, onClose, onSent }
       });
       onSent();
     } catch (failure) { setError(failure instanceof Error ? failure.message : "The interview invitation could not be saved."); }
-    finally { setPending(false); }
+    finally { inFlight.current = false; setPending(false); }
   };
   const show = (k: string) => tried && errs[k];
 
   return (
-    <div className="modal-backdrop" onMouseDown={(ev) => ev.target === ev.currentTarget && onClose()}>
-      <form className="modal iv-modal" role="dialog" aria-modal="true" aria-labelledby="iv-title" onSubmit={send} noValidate aria-busy={pending}>
+    <div className="modal-backdrop" onMouseDown={(ev) => ev.target === ev.currentTarget && close()}>
+      <form ref={form} tabIndex={-1} onKeyDown={keyboard} className="modal iv-modal" role="dialog" aria-modal="true" aria-labelledby="iv-title" onSubmit={send} noValidate aria-busy={pending}>
         <div className="modal-head">
           <h2 id="iv-title" className="h3">Invite {name} to interview</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">×</button>
+          <button type="button" className="icon-btn" disabled={pending} onClick={close} aria-label="Close">×</button>
         </div>
         <div className="modal-body stack" style={{ gap: 18 }}>
-          <fieldset className="plain">
+          <fieldset className="plain" disabled={pending}>
             <legend className="field">How</legend>
             <div className="format-grid">
               {FORMATS.map((f) => (
@@ -116,7 +137,7 @@ export function ScheduleModal({ appId, clubId, name, existing, onClose, onSent }
                 <button type="button" className="btn sm primary" disabled title="Paste an existing meeting link below.">Connect</button>
                 <div className="or-paste">
                   <label className="field" htmlFor="iv-link">Paste a meeting link <span className="req">*</span></label>
-                  <input id="iv-link" className="input" value={link} onChange={(e) => setLink(e.target.value)} placeholder={format === "zoom" ? "https://usc.zoom.us/j/…" : format === "teams" ? "https://teams.microsoft.com/l/meetup-join/…" : "https://meet.google.com/…"} aria-invalid={!!show("link")} />
+                  <input id="iv-link" className="input" disabled={pending} maxLength={2000} value={link} onChange={(e) => setLink(e.target.value)} placeholder={format === "zoom" ? "https://usc.zoom.us/j/…" : format === "teams" ? "https://teams.microsoft.com/l/meetup-join/…" : "https://meet.google.com/…"} aria-invalid={!!show("link")} />
                   {show("link") && <p className="field-error" role="alert">{errs.link}</p>}
                 </div>
               </div>
@@ -124,13 +145,13 @@ export function ScheduleModal({ appId, clubId, name, existing, onClose, onSent }
             <div className="form-grid">
               <div>
                 <label className="field" htmlFor="iv-bldg">Building</label>
-                <select id="iv-bldg" className="input" value={building} onChange={(e) => setBuilding(e.target.value)}>
+                <select id="iv-bldg" className="input" disabled={pending} value={building} onChange={(e) => setBuilding(e.target.value)}>
                   {Object.values(BUILDINGS).map((b) => <option key={b.code} value={b.code}>{b.code} · {b.name}</option>)}
                 </select>
               </div>
               <div>
                 <label className="field" htmlFor="iv-room">Room <span className="req">*</span></label>
-                <input id="iv-room" className="input" value={room} onChange={(e) => setRoom(e.target.value)} placeholder="e.g. TCC 227" aria-invalid={!!show("room")} />
+                <input id="iv-room" className="input" disabled={pending} maxLength={100} value={room} onChange={(e) => setRoom(e.target.value)} placeholder="e.g. TCC 227" aria-invalid={!!show("room")} />
                 {show("room") && <p className="field-error" role="alert">{errs.room}</p>}
               </div>
             </div>
@@ -139,32 +160,34 @@ export function ScheduleModal({ appId, clubId, name, existing, onClose, onSent }
           <div>
             <div className="row between">
               <span className="field" style={{ margin: 0 }}>Times they can pick from</span>
-              <select className="input sm-select" value={duration} onChange={(e) => setDuration(Number(e.target.value))} aria-label="Length">
+              <select className="input sm-select" disabled={pending} value={duration} onChange={(e) => setDuration(Number(e.target.value))} aria-label="Length">
                 {[15, 20, 30, 45].map((m) => <option key={m} value={m}>{m} min each</option>)}
               </select>
             </div>
+            <p className="hint">Dates and times use your device's time zone: {zone}.</p>
             <div className="slot-edit">
               {slots.map((s, i) => (
                 <div key={i} className="row" style={{ gap: 8 }}>
-                  <input type="datetime-local" className="input" value={s} min={now} onChange={(e) => setSlots(slots.map((x, j) => (j === i ? e.target.value : x)))} aria-label={`Time ${i + 1}`} />
-                  {slots.length > 1 && <button type="button" className="icon-btn" onClick={() => setSlots(slots.filter((_, j) => j !== i))} aria-label={`Remove time ${i + 1}`}>×</button>}
+                  <input type="datetime-local" className="input" disabled={pending} value={s} min={now} onChange={(e) => setSlots(slots.map((x, j) => (j === i ? e.target.value : x)))} aria-label={`Time ${i + 1}`} />
+                  {slots.length > 1 && <button type="button" className="icon-btn" disabled={pending} onClick={() => setSlots(slots.filter((_, j) => j !== i))} aria-label={`Remove time ${i + 1}`}>×</button>}
                 </div>
               ))}
             </div>
-            {slots.length < 6 && <button type="button" className="link-act" onClick={() => setSlots([...slots, base(slots.length + 3, 17)])}>+ Add a time</button>}
+            {slots.length < 6 && <button type="button" className="link-act" disabled={pending} onClick={() => setSlots([...slots, base(slots.length + 3, 17)])}>+ Add a time</button>}
             {show("slots") && <p className="field-error" role="alert">{errs.slots}</p>}
           </div>
 
           <div>
             <label className="field" htmlFor="iv-note">Note for {name.split(" ")[0]} <span className="optional">Optional</span></label>
-            <textarea id="iv-note" className="input" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Who they'll meet, what to bring, how long it takes." />
+            <textarea id="iv-note" className="input" disabled={pending} maxLength={2000} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Who they'll meet, what to bring, how long it takes." />
           </div>
 
+          {existing?.booked && <p className="hint">Updating this invitation clears the current booking. The applicant will need to choose a time again.</p>}
           {error && <p className="field-error" role="alert">{error}</p>}
           <div className="row between wrap" style={{ gap: 10 }}>
             <span className="subtle" style={{ fontSize: 13 }}>The applicant can pick a time in OdySC.</span>
             <div className="row" style={{ gap: 8 }}>
-              <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+              <button type="button" className="btn ghost" disabled={pending} onClick={close}>Cancel</button>
               <button type="submit" className="btn primary" disabled={pending}>{pending ? "Saving…" : existing ? "Update invite" : "Save invite"}</button>
             </div>
           </div>
@@ -205,17 +228,19 @@ export function InterviewBooking({ iv, club }: { iv: Interview | undefined; club
   const [copied, setCopied] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const inFlight = useRef(false);
   const contact = club.contacts[0]?.email;
   const available = iv?.slots.filter((slot) => Number.isFinite(new Date(slot).getTime()) && new Date(slot).getTime() > Date.now()) ?? [];
-  useEffect(() => { setPick(null); setCopied(false); setError(""); }, [iv?.applicationId, iv?.booked]);
+  useEffect(() => { setPick(null); setCopied(false); setError(""); }, [iv?.applicationId, iv?.booked, iv?.link, iv?.slots.join("|")]);
   const changeBooking = async (slot: string | null) => {
-    if (!iv || pending) return;
+    if (!iv || inFlight.current) return;
     if (slot && (!available.includes(slot) || new Date(slot).getTime() <= Date.now())) return setError("Choose an available future time.");
+    inFlight.current = true;
     setPending(true);
     setError("");
     try { await bookInterview(iv.applicationId, slot); setPick(null); }
     catch (failure) { setError(failure instanceof Error ? failure.message : "The booking could not be updated."); }
-    finally { setPending(false); }
+    finally { inFlight.current = false; setPending(false); }
   };
 
   if (!iv)
@@ -232,7 +257,7 @@ export function InterviewBooking({ iv, club }: { iv: Interview | undefined; club
           </div>
         </div>
         {iv.note && <p className="iv-note">{iv.note}</p>}
-        <fieldset className="plain">
+        <fieldset className="plain" disabled={pending}>
           <legend className="field">Pick a time</legend>
           <div className="slot-pick">
             {available.map((s) => (

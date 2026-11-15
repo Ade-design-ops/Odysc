@@ -93,7 +93,7 @@ const application: ApplicationRow = {
   submitted_at: at,
 };
 type Row = Record<string, unknown>;
-function databaseFixture() {
+function databaseFixture(now?: () => number) {
   const calls: {
     sql: string;
     values: readonly unknown[];
@@ -192,7 +192,7 @@ function databaseFixture() {
     },
     async close() {},
   };
-  const store = new FrontendStore({ dbUrl: "", caFile: "", database: db });
+  const store = new FrontendStore({ dbUrl: "", caFile: "", database: db, now });
   return { store, state, calls };
 }
 test("shared workflow identities are rechecked against current verified USC Auth data before private queries", async () => {
@@ -216,6 +216,20 @@ test("club applicant data is denied to a nonmember before any application query"
     calls.some((call) => call.sql.includes("FROM public.odysc_applications")),
     false,
   );
+});
+test("applicant responses expose the canonical application lifecycle status", async () => {
+  const { store, state } = databaseFixture();
+  state.membership = member("admin");
+  state.app = { ...application, status: "accepted" };
+  state.insertedApp = state.app as unknown as Row;
+
+  const applicants = await store.applicants(actor, "1");
+
+  assert.equal(applicants.length, 1);
+  assert.equal(applicants[0]!.applicationId, appId);
+  assert.equal(applicants[0]!.status, "accepted");
+  assert.equal(applicants[0]!.verifiedStudent, false);
+  assert.equal(applicants[0]!.verifiedUscEmail, true);
 });
 test("reviewers cannot invite teammates or change club settings", async () => {
   const { store, state, calls } = databaseFixture();
@@ -268,6 +282,50 @@ test("an interest application stores the verified actor and excludes a private U
     false,
   );
   assert.equal(result.workspace.applicationIds["1"], appId);
+});
+test("date-only application deadlines remain open until campus midnight in winter and summer", async () => {
+  for (const { deadline, openAt, lastOpen, closedAt } of [
+    {
+      deadline: "2026-01-15",
+      openAt: "2026-01-16T00:30:00.000Z",
+      lastOpen: "2026-01-16T07:59:59.999Z",
+      closedAt: "2026-01-16T08:00:00.000Z",
+    },
+    {
+      deadline: "2026-07-15",
+      openAt: "2026-07-16T00:30:00.000Z",
+      lastOpen: "2026-07-16T06:59:59.999Z",
+      closedAt: "2026-07-16T07:00:00.000Z",
+    },
+  ]) {
+    for (const instant of [openAt, lastOpen]) {
+      const { store, state } = databaseFixture(() => Date.parse(instant));
+      state.settings = { deadline };
+      await assert.doesNotReject(() => store.submit(actor, { clubId: "1", answers: [] }));
+      assert.ok(state.insertedApp, `submission stays open at ${instant}`);
+    }
+    const { store, state } = databaseFixture(() => Date.parse(closedAt));
+    state.settings = { deadline };
+    await assert.rejects(
+      store.submit(actor, { clubId: "1", answers: [] }),
+      (error) => error instanceof HttpError && error.code === "APPLICATION_CLOSED",
+    );
+    assert.equal(state.insertedApp, undefined);
+  }
+});
+test("timestamp application deadlines use their exact instant rather than a campus day", async () => {
+  const deadline = "2026-07-15T16:00:00-07:00";
+  const before = databaseFixture(() => Date.parse("2026-07-15T22:59:59.999Z"));
+  before.state.settings = { deadline };
+  await assert.doesNotReject(() => before.store.submit(actor, { clubId: "1", answers: [] }));
+
+  const after = databaseFixture(() => Date.parse("2026-07-15T23:00:00.001Z"));
+  after.state.settings = { deadline };
+  await assert.rejects(
+    after.store.submit(actor, { clubId: "1", answers: [] }),
+    (error) => error instanceof HttpError && error.code === "APPLICATION_CLOSED",
+  );
+  assert.equal(after.state.insertedApp, undefined);
 });
 test("USC ID sharing requires a club reason, an existing ID and explicit per-application consent", async () => {
   const { store, state } = databaseFixture();
@@ -362,7 +420,7 @@ test("application summaries only report submitted facts and flag injected instru
 });
 async function apiFixture(
   t: TestContext,
-  options: { eventError?: HttpError } = {},
+  options: { eventError?: HttpError; logoutStatus?: number } = {},
 ) {
   const providerCalls: {
     path: string;
@@ -386,6 +444,10 @@ async function apiFixture(
         return new Response(JSON.stringify(user), { status: 200 });
       if (path.endsWith("/signup"))
         return new Response(JSON.stringify(user), { status: 200 });
+      if (path.endsWith("/logout")) {
+        const status = options.logoutStatus ?? 204;
+        return new Response(status === 204 ? null : "{}", { status });
+      }
       return new Response("{}", { status: 500 });
     },
   });
@@ -655,6 +717,33 @@ test("stale actor headers cannot clear another browser account's session during 
   assert.equal(response.statusCode,409);
   assert.equal(response.json().error.code,"SESSION_CHANGED");
   assert.equal(response.headers["set-cookie"],undefined);
+});
+test("logout keeps the browser session intact when provider revocation fails", async (t) => {
+  const fixture = await apiFixture(t, { logoutStatus: 500 });
+  const response = await fixture.app.inject({
+    method: "POST",
+    url: "/api/auth/logout",
+    headers: { authorization: "Bearer test-token", "x-odysc-actor": studentId },
+  });
+
+  assert.equal(response.statusCode, 502);
+  assert.equal(response.json().error.code, "SUPABASE_REQUEST_FAILED");
+  assert.equal(response.headers["set-cookie"], undefined);
+  assert.ok(fixture.providerCalls.some((call) => call.path.endsWith("/logout")));
+});
+test("successful provider logout clears the browser session", async (t) => {
+  const fixture = await apiFixture(t);
+  const response = await fixture.app.inject({
+    method: "POST",
+    url: "/api/auth/logout",
+    headers: { authorization: "Bearer test-token", "x-odysc-actor": studentId },
+  });
+
+  assert.equal(response.statusCode, 204);
+  const cookies = response.headers["set-cookie"];
+  const serialized = Array.isArray(cookies) ? cookies.join("\n") : cookies ?? "";
+  assert.match(serialized, /odysc_session=;/);
+  assert.match(serialized, /Max-Age=0/);
 });
 
 

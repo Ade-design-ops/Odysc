@@ -179,11 +179,11 @@ export async function registerFrontendBackend(
   });
   app.post("/api/auth/logout", secured, async (request, reply) => {
     const identity = await actor(request);
-    webAuth.clearSession(reply);
     await gateway.request("/auth/v1/logout?scope=local", {
       method: "POST",
       token: identity.token,
     });
+    webAuth.clearSession(reply);
     return reply.code(204).send();
   });
   app.get("/api/me", secured, async (request) =>

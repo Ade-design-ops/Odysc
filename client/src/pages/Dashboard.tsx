@@ -5,7 +5,7 @@ import { DuePill, Loading, Monogram, Ring } from "../components/ui";
 import { PROFILE_SECTIONS, appState, useApp } from "../store";
 import { FormatIcon, formatLabel } from "../components/Interview";
 import { PHOTOS } from "../photos";
-import { TODAY, daysUntil, fmtDate, fmtTime, toDate } from "../util";
+import { TODAY, daysUntil, deadlinePassed, fmtDate, fmtTime, toDate } from "../util";
 import HomeBand from "../components/HomeBand";
 
 const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
@@ -51,10 +51,10 @@ export default function Dashboard() {
   const mine = myClubs.map(clubById).filter((c): c is NonNullable<typeof c> => !!c);
   const todo = mine
     .map((c) => ({ c, st: appState(s, c) }))
-    .filter(({ c, st }) => st.status === "draft" && (!c.deadline || daysUntil(c.deadline) >= 0))
+    .filter(({ c, st }) => st.status === "draft" && !deadlinePassed(c.deadline))
     .sort((a, b) => a.c.deadline.localeCompare(b.c.deadline));
   const upcoming = events
-    .filter((e) => myClubs.includes(e.clubId))
+    .filter((e) => myClubs.includes(e.clubId) && clubById(e.clubId) && new Date(e.start).getTime() + e.durationMin * 60000 > Date.now())
     .sort((a, b) => a.start.localeCompare(b.start))
     .slice(0, 4);
 
@@ -65,7 +65,7 @@ export default function Dashboard() {
     ...events.filter((e) => added.has(e.id) && sameDay(new Date(e.start), d)).map((e) => ({ id: e.id, kind: "event" as const, label: `${clubById(e.clubId)?.shortName}: ${e.title}`, time: fmtTime(e.start) })),
     ...personal.filter((p) => sameDay(new Date(p.start), d)).map((p) => ({ id: p.id, kind: "personal" as const, label: p.title, time: fmtTime(p.start) })),
     ...mine.filter((c) => interviewForClub(c.id)!?.booked && sameDay(new Date(interviewForClub(c.id)!.booked!), d)).map((c) => ({ id: `iv_${c.id}`, kind: "interview" as const, label: `${c.shortName} interview`, time: fmtTime(interviewForClub(c.id)!.booked!) })),
-    ...todo.filter(({ c }) => sameDay(toDate(c.deadline), d)).map(({ c }) => ({ id: c.id, kind: "due" as const, label: `${c.shortName} due`, time: "11:59 PM" })),
+    ...todo.filter(({ c }) => c.deadline && sameDay(toDate(c.deadline), d)).map(({ c }) => ({ id: c.id, kind: "due" as const, label: `${c.shortName} due`, time: c.deadline.length === 10 ? "Due" : fmtTime(c.deadline) })),
   ];
   const toBook = mine.map((c) => ({ c })).filter(({ c }) => interviewForClub(c.id)! && !interviewForClub(c.id)!.booked && s.apps[c.id]?.status === "interview");
   const submitted = mine.filter((c) => s.apps[c.id] && s.apps[c.id].status !== "draft").length;
@@ -123,16 +123,16 @@ export default function Dashboard() {
               <span className="btn primary">Search clubs</span>
             </Link>
           ) : todo.length === 0 ? (
-            <div className="card subtle">Nothing due. Every club on your list has been submitted.</div>
+            <div className="card subtle">No open applications need attention right now.</div>
           ) : (
             <div className="card list">
               {todo.map(({ c, st }) => (
                 <Link key={c.id} to={`/my-clubs/${c.slug}`} className="list-row">
-                  <Ring value={st.answered / c.questions.length} />
+                  <Ring value={c.questions.length ? st.answered / c.questions.length : 0} />
                   <Monogram club={c} size="sm" />
                   <div style={{ flex: 1 }}>
                     <div className="row-title">{st.answered === 0 ? "Start" : "Finish"} your {c.shortName} application</div>
-                    <div className="subtle">{st.answered} of {c.questions.length} questions · closes {fmtDate(c.deadline)}</div>
+                    <div className="subtle">{st.answered} of {c.questions.length} questions · {c.deadline ? `closes ${fmtDate(c.deadline)}` : "No deadline posted"}</div>
                   </div>
                   <DuePill iso={c.deadline} />
                 </Link>
@@ -142,7 +142,7 @@ export default function Dashboard() {
 
           {upcoming.length > 0 && (
             <>
-              <h2 className="h3" style={{ margin: "28px 0 12px" }}>Info sessions from your clubs</h2>
+              <h2 className="h3" style={{ margin: "28px 0 12px" }}>Events from your clubs</h2>
               <div className="card list">
                 {upcoming.map((e) => {
                   const c = clubById(e.clubId)!;

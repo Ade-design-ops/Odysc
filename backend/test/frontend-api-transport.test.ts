@@ -3,7 +3,7 @@ import test, { type TestContext } from 'node:test';
 import { api, ApiError, setApiActor } from '../../client/src/api.js';
 
 interface CapturedRequest { url: string; options: RequestInit }
-function fixture(t: TestContext, respond: (request: CapturedRequest) => Response = () => Response.json({})) {
+function fixture(t: TestContext, respond: (request: CapturedRequest) => Response | Promise<Response> = () => Response.json({})) {
   const previous = globalThis.fetch;
   const calls: CapturedRequest[] = [];
   globalThis.fetch = async (input, options = {}) => {
@@ -137,4 +137,31 @@ test('event publication posts the real event with the expected actor while event
   assert.equal(calls[1]!.url, '/api/events');
   assert.equal(calls[1]!.options.method, 'GET');
   assert.equal(new Headers(calls[1]!.options.headers).has('x-odysc-actor'), false);
+});
+
+
+test('late private responses cannot cross into another signed-in account, including logout', async t => {
+  let release!: (response: Response) => void;
+  fixture(t, () => new Promise<Response>(resolve => { release = resolve; }));
+  const first = '11111111-1111-4111-8111-111111111111';
+  const second = '22222222-2222-4222-8222-222222222222';
+  for (const [index, operation] of [() => api.me(), () => api.logout()].entries()) {
+    setApiActor(first);
+    const pending = operation();
+    setApiActor(second);
+    release(index ? new Response(null, { status: 204 }) : Response.json({ privateValue: 'first-account-only' }));
+    await assert.rejects(pending, error => error instanceof ApiError && error.code === 'SESSION_CHANGED' && error.actorId === first);
+  }
+});
+
+test('an account change during private JSON parsing discards the old payload', async t => {
+  const first = '11111111-1111-4111-8111-111111111111';
+  const second = '22222222-2222-4222-8222-222222222222';
+  fixture(t, () => {
+    const response = Response.json({});
+    response.json = async () => { setApiActor(second); return { privateValue: 'first-account-only' }; };
+    return response;
+  });
+  setApiActor(first);
+  await assert.rejects(api.me(), error => error instanceof ApiError && error.code === 'SESSION_CHANGED' && error.actorId === first);
 });

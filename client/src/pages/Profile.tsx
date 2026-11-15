@@ -12,12 +12,13 @@ const YEARS = ["", "Freshman", "Sophomore", "Junior", "Senior", "Fifth year or l
 type SectionId = (typeof PROFILE_SECTIONS)[number]["id"] | "answers";
 
 export default function Profile() {
-  const { ready, profile, updateProfile, profileProgress, profileDone, answerBank, clubById, apps, saveStatus, profileSaveError, flushProfile, completeProfile } = useApp();
+  const { ready, profile, updateProfile, profileProgress, profileDone, answerBank, clubById, apps, saveStatus, profileSaveError, flushProfile, completeProfile, resumeUploaded } = useApp();
   const sharedWith = Object.entries(apps).filter(([, a]) => a.sharedUscId).map(([id]) => clubById(id)?.shortName ?? id);
   const [active, setActive] = useState<SectionId>("academics");
   const [parsing, setParsing] = useState(false);
   const [fileError, setFileError] = useState("");
   const [suggested, setSuggested] = useState<Partial<Student> | null>(null);
+  const [basicExtraction, setBasicExtraction] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const toast = useToast();
   const nav = useNavigate();
@@ -30,11 +31,14 @@ export default function Profile() {
 
   const onResume = async (file: File | undefined) => {
     if (!file) return;
-    if (file.type !== "application/pdf" || file.size === 0 || file.size > 5 * 1024 * 1024) return setFileError("Please upload a PDF up to 5 MB and 10 pages.");
+    const pdf = file.type === "application/pdf" || (!file.type && /\.pdf$/i.test(file.name));
+    if (!pdf || file.size === 0 || file.size > 5 * 1024 * 1024) return setFileError("Please upload a PDF up to 5 MB and 10 pages.");
     setFileError("");
     setParsing(true);
     try {
       const parsed = await api.parseResume(file);
+      resumeUploaded();
+      setBasicExtraction(parsed.mode === "local");
       setSuggested(parsed);
       toast.show("Your PDF is saved privately. Review its suggestions before applying them.");
     } catch (error) {
@@ -68,10 +72,10 @@ export default function Profile() {
       </div>
 
       <label className={`dropzone ${parsing ? "busy" : ""}`}>
-        <input type="file" accept="application/pdf" className="sr-only" onChange={(e) => onResume(e.target.files?.[0])} disabled={parsing} />
+        <input type="file" accept="application/pdf" className="sr-only" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; void onResume(file); }} disabled={parsing} />
         <div>
           <div className="h3">{parsing ? "Reading your resume…" : "Autofill from your resume"}</div>
-          <div className="subtle">{parsing ? "Pulling out your major, experience and skills." : "Upload a PDF and we'll fill in the sections below. You can edit anything."}</div>
+          <div className="subtle">{parsing ? "Pulling out your major, experience and skills." : "Upload a PDF to review suggested details. You can edit anything."}</div>
           {fileError && <div role="alert" style={{ color: "var(--cardinal)", fontSize: 13, marginTop: 4 }}>{fileError}</div>}
         </div>
         <span className="btn">{parsing ? "…" : "Upload PDF"}</span>
@@ -79,6 +83,7 @@ export default function Profile() {
 
       {suggested && <div className="alert" role="status">
         <strong>Review résumé suggestions</strong>
+        {basicExtraction && <p className="subtle">Using basic text extraction. Review suggestions; some details may need entering manually.</p>}
         <p className="subtle">{[suggested.major, suggested.skills?.length ? `${suggested.skills.length} skills` : "", suggested.interests?.length ? `${suggested.interests.length} interests` : "", suggested.experiences?.length ? `${suggested.experiences.length} experience entries` : ""].filter(Boolean).join(" · ") || "No extra details could be extracted. Your PDF is saved; you can enter your profile yourself."}</p>
         <div className="row" style={{ gap: 8 }}><button className="btn primary" onClick={applySuggestions}>Apply suggestions</button><button className="btn ghost" onClick={() => setSuggested(null)}>Keep my entered details</button></div>
       </div>}
@@ -96,21 +101,22 @@ export default function Profile() {
         <section className="card panel" key={active}>
           {active === "personal" && (
             <Fields title="Personal" hint="From your account. Clubs see everything here except your USC ID.">
-              <Field label="Full name"><input className="input" value={profile.name} onChange={(e) => updateProfile({ name: e.target.value })} /></Field>
+              <Field label="Full name"><input className="input" maxLength={100} value={profile.name} onChange={(e) => updateProfile({ name: e.target.value })} /></Field>
               <div className="form-grid">
-                <Field label="Preferred name"><input className="input" value={profile.preferredName ?? ""} onChange={(e) => updateProfile({ preferredName: e.target.value })} /></Field>
-                <Field label="Pronouns"><input className="input" value={profile.pronouns ?? ""} placeholder="Optional" onChange={(e) => updateProfile({ pronouns: e.target.value })} /></Field>
+                <Field label="Preferred name"><input className="input" maxLength={100} value={profile.preferredName ?? ""} onChange={(e) => updateProfile({ preferredName: e.target.value })} /></Field>
+                <Field label="Pronouns"><input className="input" maxLength={80} value={profile.pronouns ?? ""} placeholder="Optional" onChange={(e) => updateProfile({ pronouns: e.target.value })} /></Field>
               </div>
               <Field label="USC email"><input className="input" value={profile.email} disabled /></Field>
               <Field label="USC ID (optional)">
-                <input className="input" inputMode="numeric" maxLength={10} value={profile.uscId ?? ""} placeholder="10 digits, only if you choose to provide it" onChange={(event) => updateProfile({ uscId: event.target.value.replace(/\D/g, "").slice(0, 10) })} />
+                <input className="input" inputMode="numeric" maxLength={10} value={profile.uscId ?? ""} aria-invalid={!!profile.uscId && !/^\d{10}$/.test(profile.uscId)} placeholder="10 digits, only if you choose to provide it" onChange={(event) => updateProfile({ uscId: event.target.value.replace(/\D/g, "").slice(0, 10) })} />
                 <span className="hint">{sharedWith.length ? `Private. You agreed to share it with ${sharedWith.join(", ")} only.` : "Optional and private. This number is not used to verify enrollment. Clubs only see it with your consent."}</span>
+                {!!profile.uscId && !/^\d{10}$/.test(profile.uscId) && <span className="field-error" role="alert">Enter all 10 digits, or leave it blank, to save your profile.</span>}
               </Field>
             </Fields>
           )}
           {active === "academics" && (
             <Fields title="Academics">
-              <Field label="Major"><input className="input" value={profile.major} placeholder="e.g. Computer Science" onChange={(e) => updateProfile({ major: e.target.value })} /></Field>
+              <Field label="Major"><input className="input" maxLength={150} value={profile.major} placeholder="e.g. Computer Science" onChange={(e) => updateProfile({ major: e.target.value })} /></Field>
               <Field label="Class">
                 <select className="input" value={profile.year} onChange={(e) => updateProfile({ year: Number(e.target.value) })}>
                   {YEARS.map((y, i) => <option key={i} value={i}>{y || "Select year"}</option>)}
@@ -123,6 +129,7 @@ export default function Profile() {
             <Fields title="Experience" hint="Optional: projects, jobs and volunteering. One per line.">
               <textarea
                 className="input"
+                maxLength={4000}
                 value={profile.experiences.join("\n")}
                 placeholder="Built a line-following robot…"
                 onChange={(e) => updateProfile({ experiences: e.target.value.split("\n").filter((l, i, a) => l.trim() || i === a.length - 1) })}
@@ -138,7 +145,7 @@ export default function Profile() {
             </Fields>
           )}
           {active === "answers" && (
-            <Fields title="Saved answers" hint="Everything you've submitted. When another club asks something similar, we'll offer it back.">
+            <Fields title="Saved answers" hint="Answers you chose to save. When another club asks something similar, we'll offer them back.">
               {answerBank.map((b) => (
                 <div key={b.id} className="saved-answer">
                   <div className="row-title">{b.prompt}</div>
@@ -161,6 +168,7 @@ export default function Profile() {
                     const i = PROFILE_SECTIONS.findIndex((s) => s.id === active);
                     const next = PROFILE_SECTIONS.slice(i + 1).concat(PROFILE_SECTIONS.slice(0, i)).find((s) => !s.done(profile));
                     if (next) setActive(next.id);
+                    else toast.show(active === "interests" ? "Add at least one interest. Press Enter or click outside the field to save it." : "Complete this section before searching for clubs.");
                   }}
                 >
                   Next section

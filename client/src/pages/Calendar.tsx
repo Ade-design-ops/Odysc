@@ -1,7 +1,7 @@
 // Student calendar. Shows club events you added, your own events, and application
 // deadlines; info sessions from clubs on your list appear as dashed "suggested" chips you
 // can add in one click. Each calendar gets a color you choose and can be hidden.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ClubEvent, PersonalEvent } from "../../../shared/types";
 import CampusMap from "../components/CampusMap";
 import HomeBand from "../components/HomeBand";
@@ -24,7 +24,6 @@ type Item = {
   personal?: PersonalEvent;
 };
 
-const DAY = 86_400_000;
 const CLUB_DEFAULTS = CAL_COLORS.filter((c) => c !== "#c99700" && c !== "#23211f");
 const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -34,6 +33,7 @@ export default function Calendar() {
   const { ready, events, myClubs, clubById, calAdded, personal, calColors, calHidden, toggleCalHidden, setCalColor, apps, interviews, applicationIdForClub } = s;
   const [month, setMonth] = useState(new Date(TODAY.getFullYear(), TODAY.getMonth(), 1));
   const [view, setView] = useState<"month" | "agenda">("month");
+  const [agendaDay, setAgendaDay] = useState<string | null>(null);
   const [selected, setSelected] = useState<Item | null>(null);
   const [creating, setCreating] = useState<string | null>(null); // yyyy-mm-dd
   const [picking, setPicking] = useState<string | null>(null); // color picker for calendar key
@@ -54,7 +54,7 @@ export default function Calendar() {
     for (const e of events) {
       const added = calAdded.includes(e.id);
       if (!added && !myClubs.includes(e.clubId)) continue;
-      out.push({ key: e.clubId, id: e.id, kind: added ? "club" : "suggested", title: `${clubById(e.clubId)?.shortName}: ${e.title}`, short: e.title, start: new Date(e.start), durationMin: e.durationMin, where: e.room, event: e });
+      out.push({ key: e.clubId, id: e.id, kind: added ? "club" : "suggested", title: `${clubById(e.clubId)?.shortName ?? "Club"}: ${e.title}`, short: e.title, start: new Date(e.start), durationMin: e.durationMin, where: [e.buildingCode, e.room].filter(Boolean).join(" "), event: e });
     }
     for (const p of personal) out.push({ key: "personal", id: p.id, kind: "personal", title: p.title, short: p.title, start: new Date(p.start), durationMin: p.durationMin, where: p.location, personal: p });
     for (const id of myClubs) {
@@ -65,7 +65,7 @@ export default function Calendar() {
     for (const iv of Object.values(interviews)) {
       if (!iv.booked || applicationIdForClub(iv.clubId) !== iv.applicationId) continue;
       const c = clubById(iv.clubId);
-      out.push({ key: "interviews", id: `iv_${iv.clubId}`, kind: "personal", title: `${c?.shortName} interview`, short: `${c?.shortName} interview`, start: new Date(iv.booked), durationMin: iv.durationMin, where: iv.room ?? (iv.format === "zoom" ? "Zoom" : iv.format === "teams" ? "Teams" : "Google Meet") });
+      out.push({ key: "interviews", id: `iv_${iv.clubId}`, kind: "personal", title: `${c?.shortName ?? "Club"} interview`, short: `${c?.shortName ?? "Club"} interview`, start: new Date(iv.booked), durationMin: iv.durationMin, where: iv.format === "in-person" ? [iv.buildingCode, iv.room].filter(Boolean).join(" ") || "Location not provided" : iv.format === "zoom" ? "Zoom" : iv.format === "teams" ? "Teams" : "Google Meet" });
     }
     return out.filter((i) => !calHidden.includes(i.key) && Number.isFinite(i.start.getTime())).sort((a, b) => a.start.getTime() - b.start.getTime());
   }, [events, calAdded, myClubs, personal, apps, clubById, calHidden, interviews, applicationIdForClub]);
@@ -74,10 +74,10 @@ export default function Calendar() {
 
   // month grid: weeks starting Sunday
   const first = new Date(month);
-  const gridStart = new Date(first.getTime() - first.getDay() * DAY);
+  const gridStart = new Date(first.getFullYear(), first.getMonth(), 1 - first.getDay());
   const days = Array.from({ length: 42 }, (_, i) => new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i));
   const weeks = days[35].getMonth() !== month.getMonth() ? 5 : 6;
-  const agenda = items.filter((i) => i.start >= new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate()));
+  const agenda = items.filter((i) => agendaDay ? ymd(i.start) === agendaDay : i.start >= new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate()));
 
   const addedCount = items.filter((i) => i.kind === "club" || i.kind === "personal").length;
 
@@ -91,8 +91,8 @@ export default function Calendar() {
           <>
             <button className="btn pill-white" onClick={() => setCreating(ymd(TODAY))}>+ New event</button>
             <div className="seg-light" role="group" aria-label="View">
-              <button aria-pressed={view === "month"} onClick={() => setView("month")}>Month</button>
-              <button aria-pressed={view === "agenda"} onClick={() => setView("agenda")}>Agenda</button>
+              <button aria-pressed={view === "month"} onClick={() => { setView("month"); setAgendaDay(null); }}>Month</button>
+              <button aria-pressed={view === "agenda"} onClick={() => { setView("agenda"); setAgendaDay(null); }}>Agenda</button>
             </div>
           </>
         }
@@ -137,14 +137,14 @@ export default function Calendar() {
                   const its = items.filter((i) => sameDay(i.start, d));
                   const out = d.getMonth() !== month.getMonth();
                   return (
-                    <div key={d.toISOString()} className={`cal-day ${out ? "out" : ""} ${sameDay(d, TODAY) ? "today" : ""}`} role="gridcell" onDoubleClick={() => setCreating(ymd(d))}>
+                    <div key={d.toISOString()} className={`cal-day ${out ? "out" : ""} ${sameDay(d, TODAY) ? "today" : ""}`} role="gridcell" onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button, [role=button]")) setCreating(ymd(d)); }}>
                       <span className="cal-num">{d.getDate()}</span>
                       {its.slice(0, 3).map((i) => (
                         <button key={i.id} className={`chip-ev ${i.kind}`} style={{ ["--c" as string]: colorOf(i.key) }} onClick={() => setSelected(i)} title={i.title}>
                           {i.kind !== "deadline" && <span className="t">{fmtTime(i.start.toISOString()).replace(":00", "").replace(" ", "").toLowerCase()}</span>} {i.short}
                         </button>
                       ))}
-                      {its.length > 3 && <span className="more">+{its.length - 3} more</span>}
+                      {its.length > 3 && <span className="more" role="button" tabIndex={0} aria-label={`Show all ${its.length} events on ${fmtDate(ymd(d))}`} onClick={() => { setAgendaDay(ymd(d)); setView("agenda"); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setAgendaDay(ymd(d)); setView("agenda"); } }}>+{its.length - 3} more</span>}
                     </div>
                   );
                 })}
@@ -183,12 +183,25 @@ function EventDrawer({ item, color, onClose }: { item: Item; color: string; onCl
   const e = item.event;
   const added = e ? calAdded.includes(e.id) : true;
   const end = item.durationMin ? new Date(item.start.getTime() + item.durationMin * 60000) : null;
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !saving) onClose(); };
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [onClose, saving]);
+  const mutate = async (operation: () => Promise<void>, closeAfter: boolean) => {
+    if (saving) return;
+    setSaving(true);
+    try { await operation(); if (closeAfter) onClose(); }
+    catch { /* The shared error toast explains the failed save. */ }
+    finally { setSaving(false); }
+  };
   return (
-    <div className="modal-backdrop" onMouseDown={(ev) => ev.target === ev.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(ev) => !saving && ev.target === ev.currentTarget && onClose()}>
       <div className="modal drawer" role="dialog" aria-modal="true" aria-labelledby="ev-title" style={{ borderTopColor: color }}>
         <div className="modal-head">
           <h2 id="ev-title" className="h3">{item.title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">×</button>
+          <button className="icon-btn" disabled={saving} onClick={onClose} aria-label="Close">×</button>
         </div>
         <div className="modal-body stack" style={{ gap: 12 }}>
           <div className="subtle">
@@ -199,11 +212,11 @@ function EventDrawer({ item, color, onClose }: { item: Item; color: string; onCl
           {e && BUILDINGS[e.buildingCode] && <CampusMap code={e.buildingCode} room={e.room} title={e.title} when={`${fmtDate(e.start)}, ${fmtTime(e.start)}`} />}
           <div className="row wrap" style={{ gap: 8 }}>
             {e && (
-              <button className={`btn ${added ? "" : "primary"}`} onClick={() => { void toggleCalEvent(e.id).then(() => { if (added) onClose(); }).catch(() => {}); }}>
-                {added ? "Remove from my calendar" : "Add to my calendar"}
+              <button className={`btn ${added ? "" : "primary"}`} disabled={saving} onClick={() => { void mutate(() => toggleCalEvent(e.id), added); }}>
+                {saving ? "Saving…" : added ? "Remove from my calendar" : "Add to my calendar"}
               </button>
             )}
-            {item.personal && <button className="btn" onClick={() => { void removePersonal(item.personal!.id).then(onClose).catch(() => {}); }}>Delete event</button>}
+            {item.personal && <button className="btn" disabled={saving} onClick={() => { void mutate(() => removePersonal(item.personal!.id), true); }}>{saving ? "Deleting…" : "Delete event"}</button>}
           </div>
         </div>
       </div>
@@ -216,59 +229,68 @@ function NewEvent({ date, onClose }: { date: string; onClose: () => void }) {
   const [f, setF] = useState({ title: "", date, time: "18:00", duration: "60", location: "" });
   const [err, setErr] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !saving) onClose(); };
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [onClose, saving]);
   const save = async (ev: React.FormEvent) => {
     ev.preventDefault();
+    if (saving) return;
     const e: Record<string, string> = {};
     if (!f.title.trim()) e.title = "Give it a name.";
     if (!f.date) e.date = "Pick a date.";
     if (!f.time) e.time = "Pick a time.";
+    const start = new Date(`${f.date}T${f.time}:00`);
+    if (f.date && f.time && (!Number.isFinite(start.getTime()) || ymd(start) !== f.date || `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}` !== f.time)) e.time = "Choose a valid date and local time.";
+    if (![30, 60, 90, 120, 180].includes(Number(f.duration))) e.time = "Choose a listed event length.";
     setErr(e);
     if (Object.keys(e).length) return;
     setSaving(true);
     try {
-      await addPersonal({ title: f.title.trim(), start: new Date(`${f.date}T${f.time}:00`).toISOString(), durationMin: Number(f.duration), location: f.location.trim() || undefined });
+      await addPersonal({ title: f.title.trim(), start: start.toISOString(), durationMin: Number(f.duration), location: f.location.trim() || undefined });
       onClose();
     } catch (error) { setErr({ title: error instanceof Error ? error.message : "Could not save this event. Please try again." }); }
     finally { setSaving(false); }
   };
   const set = (k: keyof typeof f, v: string) => { setF((x) => ({ ...x, [k]: v })); setErr((x) => ({ ...x, [k]: "" })); };
   return (
-    <div className="modal-backdrop" onMouseDown={(ev) => ev.target === ev.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(ev) => !saving && ev.target === ev.currentTarget && onClose()}>
       <form className="modal" role="dialog" aria-modal="true" aria-labelledby="new-ev" onSubmit={save} noValidate>
         <div className="modal-head">
           <h2 id="new-ev" className="h3">New event</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">×</button>
+          <button type="button" className="icon-btn" disabled={saving} onClick={onClose} aria-label="Close">×</button>
         </div>
         <div className="modal-body stack" style={{ gap: 14 }}>
           <div>
             <label className="field" htmlFor="ne-title">Title <span className="req">*</span></label>
-            <input id="ne-title" className="input" value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Study group for EE 250" autoFocus aria-invalid={!!err.title} />
+            <input id="ne-title" className="input" maxLength={200} disabled={saving} value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Study group for EE 250" autoFocus aria-invalid={!!err.title} />
             {err.title && <p className="field-error" role="alert">{err.title}</p>}
           </div>
           <div className="form-grid">
             <div>
               <label className="field" htmlFor="ne-date">Date <span className="req">*</span></label>
-              <input id="ne-date" type="date" className="input" value={f.date} onChange={(e) => set("date", e.target.value)} aria-invalid={!!err.date} />
+              <input id="ne-date" type="date" className="input" disabled={saving} value={f.date} onChange={(e) => set("date", e.target.value)} aria-invalid={!!err.date} />
               {err.date && <p className="field-error" role="alert">{err.date}</p>}
             </div>
             <div>
               <label className="field" htmlFor="ne-time">Start <span className="req">*</span></label>
-              <input id="ne-time" type="time" className="input" value={f.time} onChange={(e) => set("time", e.target.value)} aria-invalid={!!err.time} />
+              <input id="ne-time" type="time" className="input" disabled={saving} value={f.time} onChange={(e) => set("time", e.target.value)} aria-invalid={!!err.time} />
               {err.time && <p className="field-error" role="alert">{err.time}</p>}
             </div>
             <div>
               <label className="field" htmlFor="ne-dur">Length</label>
-              <select id="ne-dur" className="input" value={f.duration} onChange={(e) => set("duration", e.target.value)}>
+              <select id="ne-dur" className="input" disabled={saving} value={f.duration} onChange={(e) => set("duration", e.target.value)}>
                 {[["30", "30 min"], ["60", "1 hour"], ["90", "1.5 hours"], ["120", "2 hours"], ["180", "3 hours"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </div>
             <div>
               <label className="field" htmlFor="ne-loc">Where <span className="optional">Optional</span></label>
-              <input id="ne-loc" className="input" value={f.location} onChange={(e) => set("location", e.target.value)} placeholder="Leavey 2nd floor" />
+              <input id="ne-loc" className="input" maxLength={300} disabled={saving} value={f.location} onChange={(e) => set("location", e.target.value)} placeholder="Leavey 2nd floor" />
             </div>
           </div>
           <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
-            <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+            <button type="button" className="btn ghost" disabled={saving} onClick={onClose}>Cancel</button>
             <button type="submit" className="btn primary" disabled={saving}>{saving ? "Saving…" : "Add to calendar"}</button>
           </div>
         </div>

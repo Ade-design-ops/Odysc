@@ -61,6 +61,7 @@ export interface AppState extends DataState {
   clubs: Club[];
   events: ClubEvent[];
   createClubEvent: (input: Omit<ClubEvent, "id" | "clubId">) => Promise<void>;
+  resumeUploaded: () => void;
   matches: Match[];
   profileDone: boolean;
   profileProgress: number;
@@ -405,7 +406,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!p.account || !ready) return;
     const timer = setInterval(() => {
       if (document.visibilityState === "hidden" || profileDirty.current || Object.keys(pendingDrafts.current).length || Object.keys(inFlightDrafts.current).length) return;
-      void Promise.allSettled([workspaceChain.current, organizationChain.current]).then(() => loadRef.current(epochRef.current, false));
+      void Promise.allSettled([workspaceChain.current, organizationChain.current]).then(() => loadRef.current(epochRef.current, true));
     }, 30_000);
     return () => clearInterval(timer);
   }, [p.account, ready]);
@@ -533,6 +534,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     clubById: (id) => mergedClubs.find((club) => club.id === id),
     applicationIdForClub: (id) => p.applicationIds[id],
     updateProfile, flushProfile, refresh, signIn, signOut,
+    resumeUploaded: () => {
+      const epoch = epochRef.current;
+      const actor = actorKey(pRef.current);
+      if (!actor) return;
+      matchEvidenceRevision.current += 1;
+      lastMatchInput.current = "";
+      lastMatchAt.current = 0;
+      void flushProfile().then(() => { if (sameActor(epoch, actor)) void loadMatches(epoch); }).catch(notifyFailure);
+    },
     signUpStudent: (info) => register(() => api.registerStudent(info)),
     signUpOfficer: (info) => register(() => api.registerOfficer(info)),
     completeProfile: () => observed((async () => {

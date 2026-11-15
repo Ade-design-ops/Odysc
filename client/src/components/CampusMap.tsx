@@ -16,10 +16,14 @@ export default function CampusMap({ code, room, title, when }: { code: string; r
   const map = useRef<MLMap | null>(null);
   const [tilted, setTilted] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
     if (!b || !el.current) return;
     let cancelled = false;
+    setFailed(false);
+    setMapReady(false);
+    setTilted(true);
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     (async () => {
@@ -38,10 +42,12 @@ export default function CampusMap({ code, room, title, when }: { code: string; r
         });
         map.current = m;
         m.on("error", (e) => {
-          if (String(e?.error?.message ?? "").match(/style|Failed to fetch/i)) setFailed(true);
+          if (!cancelled && String(e?.error?.message ?? "").match(/style|Failed to fetch/i)) setFailed(true);
         });
 
         m.on("load", () => {
+          if (cancelled) return;
+          try {
           // Restyle the base map in OdySC colors. Layer types vary (water has fill, line and
           // symbol layers), so only touch the property that type supports, and never let one
           // bad layer stop the rest.
@@ -80,7 +86,7 @@ export default function CampusMap({ code, room, title, when }: { code: string; r
 
           // Light up the event's building once tiles are in.
           const highlight = () => {
-            if (m.getLayer("odysc-hi")) return;
+            if (cancelled || !m.getLayer("odysc-3d") || m.getLayer("odysc-hi")) return;
             const hits = m.queryRenderedFeatures(m.project([b.lng, b.lat]), { layers: ["odysc-3d"] });
             const f = hits[0];
             if (f?.id === undefined) return;
@@ -111,9 +117,12 @@ export default function CampusMap({ code, room, title, when }: { code: string; r
           tt.className = "cmap-landmark";
           tt.innerHTML = `<span class="dot"></span><span>Tommy Trojan</span>`;
           new maplibregl.Marker({ element: tt, anchor: "left" }).setLngLat([TOMMY_TROJAN.lng, TOMMY_TROJAN.lat]).addTo(m);
+          m.resize();
+          setMapReady(true);
+          } catch { if (!cancelled) setFailed(true); }
         });
       } catch {
-        setFailed(true);
+        if (!cancelled) setFailed(true);
       }
     })();
 
@@ -135,13 +144,13 @@ export default function CampusMap({ code, room, title, when }: { code: string; r
 
   return (
     <figure className="cmap" aria-label={`Map of ${b.name}`}>
-      {!failed && <div ref={el} className="cmap-canvas" />}
-      {failed && <div className="cmap-canvas cmap-fallback"><span>Map unavailable offline. Use the buttons below.</span></div>}
+      <div ref={el} className="cmap-canvas" style={failed ? { display: "none" } : undefined} />
+      {failed && <div className="cmap-canvas cmap-fallback"><span>Interactive map unavailable. Use the directions below.</span></div>}
 
       {!failed && (
         <div className="cmap-controls">
-          <button onClick={toggleTilt} aria-pressed={tilted}>{tilted ? "2D" : "3D"}</button>
-          <button onClick={recenter} aria-label="Re-center on the building">◎</button>
+          <button disabled={!mapReady} onClick={toggleTilt} aria-pressed={tilted}>{tilted ? "2D" : "3D"}</button>
+          <button disabled={!mapReady} onClick={recenter} aria-label="Re-center on the building">◎</button>
         </div>
       )}
 

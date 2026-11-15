@@ -64,8 +64,8 @@ function AccountMenu() {
   const initials = account.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   const sub = account.role === "officer" ? `${account.officerRole} · ${clubById(account.clubId ?? "")?.shortName ?? ""}` : account.email;
   return (
-    <div className="account" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)}>
-      <button className="account-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu">
+    <div className="account" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)} onKeyDown={(event) => { if (event.key === "Escape") { setOpen(false); event.currentTarget.querySelector("button")?.focus(); } }}>
+      <button className="account-btn" aria-label="Account menu" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu">
         <span className="avatar" aria-hidden="true">{initials}</span>
         <span className="hide-sm">{display}</span>
       </button>

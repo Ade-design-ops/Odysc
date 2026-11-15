@@ -107,6 +107,7 @@ export interface Summary {
 
 export interface Applicant {
   applicationId: string;
+  status?: AppStatus; // Canonical server lifecycle; never inferred from reviewer scores.
   name: string;
   preferredName?: string;
   email: string; // what clubs use to contact applicants

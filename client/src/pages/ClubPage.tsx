@@ -1,5 +1,6 @@
 // A club's public page (reached from Club Search). Simple on purpose:
 // who they are, the facts, and one button — add it to your list.
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Contacts, EventList, Facts } from "../components/ClubBits";
 import { DuePill, Loading, MatchMeter, Monogram } from "../components/ui";
@@ -8,6 +9,7 @@ import { useApp } from "../store";
 export default function ClubPage() {
   const { slug } = useParams();
   const nav = useNavigate();
+  const [adding, setAdding] = useState(false);
   const { ready, clubs, events, matches, myClubs, addClub } = useApp();
   if (!ready) return <Loading />;
   const club = clubs.find((c) => c.slug === slug);
@@ -29,14 +31,14 @@ export default function ClubPage() {
             {added ? (
               <button className="btn primary" onClick={() => nav(`/my-clubs/${club.slug}`)}>Open application</button>
             ) : (
-              <button className="btn primary" onClick={() => { void addClub(club.id).catch(() => {}); }}>+ Add to My Clubs</button>
+              <button className="btn primary" disabled={adding} onClick={async () => { setAdding(true); try { await addClub(club.id); } catch { /* The shared error toast explains a failed save. */ } finally { setAdding(false); } }}>{adding ? "Adding…" : "+ Add to My Clubs"}</button>
             )}
             <DuePill iso={club.deadline} />
           </div>
         </div>
       </section>
 
-      {match && (
+      {match && Number.isFinite(match.score) && match.score > 0 && (
         <div className="why">
           <MatchMeter score={match.score} />
           <span className="subtle">Matches your profile:</span>
@@ -58,6 +60,7 @@ export default function ClubPage() {
       <details className="disclose">
         <summary>What they ask ({club.questions.length} questions)</summary>
         <ol className="stack" style={{ paddingLeft: 18, margin: "4px 0 0" }}>
+          {!club.questions.length && <li className="muted">No additional questions have been posted.</li>}
           {club.questions.map((q) => <li key={q.id} className="muted">{q.prompt}</li>)}
         </ol>
       </details>

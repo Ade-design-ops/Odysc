@@ -102,6 +102,7 @@ function PublishEventModal({ clubName, onClose, onPublished }: { clubName: strin
     }
     inFlight.current = true;
     setPending(true);
+    form.current?.focus();
     try {
       await createClubEvent({ title, kind: draft.kind, start: start.toISOString(), durationMin, buildingCode: draft.building, room });
       onPublished();
@@ -124,8 +125,8 @@ function PublishEventModal({ clubName, onClose, onPublished }: { clubName: strin
     const first = fields[0];
     const last = fields[fields.length - 1];
     if (!first || !last) { event.preventDefault(); event.currentTarget.focus(); }
-    else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    else if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && (document.activeElement === last || document.activeElement === event.currentTarget)) { event.preventDefault(); first.focus(); }
   };
 
   return (
@@ -133,7 +134,7 @@ function PublishEventModal({ clubName, onClose, onPublished }: { clubName: strin
       <form ref={form} className="modal iv-modal" role="dialog" aria-modal="true" aria-labelledby="club-event-dialog-title" aria-describedby="club-event-publish-note" tabIndex={-1} onKeyDown={keyboard} onSubmit={submit} noValidate aria-busy={pending}>
         <div className="modal-head">
           <h2 id="club-event-dialog-title" className="h3">Publish a club event</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close event form" disabled={pending}>×</button>
+          <button type="button" className="icon-btn" onClick={() => { if (!inFlight.current) onClose(); }} aria-label="Close event form" disabled={pending}>×</button>
         </div>
         <div className="modal-body stack">
           <p id="club-event-publish-note" className="subtle">Publish this <strong>{draft.kind.toLowerCase()}</strong> for <strong>{clubName}</strong>. Students will see these details on your club page.</p>
@@ -188,7 +189,7 @@ function PublishEventModal({ clubName, onClose, onPublished }: { clubName: strin
           </fieldset>
           {error && <p className="field-error" role="alert">{error}</p>}
           <div className="row between wrap">
-            <button type="button" className="btn ghost" onClick={onClose} disabled={pending}>Cancel</button>
+            <button type="button" className="btn ghost" onClick={() => { if (!inFlight.current) onClose(); }} disabled={pending}>Cancel</button>
             <button type="submit" className="btn primary" disabled={pending}>{pending ? "Publishing…" : "Publish event"}</button>
           </div>
         </div>

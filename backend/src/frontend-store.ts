@@ -37,6 +37,19 @@ export interface FrontendStoreOptions {
   dbUrl: string;
   caFile: string;
   database?: FrontendDatabase;
+  now?: () => number;
+}
+const campusDateFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/Los_Angeles",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+function campusDate(timestamp: number) {
+  const parts = Object.fromEntries(
+    campusDateFormat.formatToParts(new Date(timestamp)).map(({ type, value }) => [type, value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 const forbidden = () =>
   new HttpError(
@@ -144,8 +157,10 @@ function database(options: FrontendStoreOptions): FrontendDatabase {
 }
 export class FrontendStore {
   private readonly db: FrontendDatabase;
+  private readonly now: () => number;
   constructor(options: FrontendStoreOptions) {
     this.db = database(options);
+    this.now = options.now ?? Date.now;
   }
   close() {
     return this.db.close();
@@ -689,13 +704,12 @@ export class FrontendStore {
       const config = clubSettingsSchema.parse(
         await this.settings(q, input.clubId),
       );
+      const now = this.now();
       if (
         config.deadline &&
-        Date.parse(
-          config.deadline.length === 10
-            ? `${config.deadline}T23:59:59.999Z`
-            : config.deadline,
-        ) < Date.now()
+        (config.deadline.length === 10
+          ? campusDate(now) > config.deadline
+          : Date.parse(config.deadline) < now)
       )
         throw new HttpError(
           409,
@@ -841,8 +855,9 @@ export class FrontendStore {
       ).rows.map((app) => ({
         applicationId: app.id,
         ...app.profile_snapshot,
+        status: app.status,
         // Email ownership is not proof of current university enrollment.
-          verifiedStudent: false,
+        verifiedStudent: false,
         verifiedUscEmail: true,
         submittedAt: iso(app.submitted_at),
         answers: app.answers.map((answer) => ({

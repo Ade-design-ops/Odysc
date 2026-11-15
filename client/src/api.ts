@@ -122,8 +122,13 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
   } catch {
     throw new ApiError("The server could not be reached. Check your connection and try again.", 0, "NETWORK_ERROR", actorId ?? undefined);
   }
+  const assertCurrentActor = () => {
+    if (actorId && actorId !== expectedActor) throw new ApiError("Your session changed. Reload before continuing.", 409, "SESSION_CHANGED", actorId);
+  };
+  assertCurrentActor();
   if (response.status === 204) return undefined as T;
   const data: unknown = await response.json().catch(() => null);
+  assertCurrentActor();
   if (!response.ok) {
     const envelope = data && typeof data === "object" ? data as { error?: { message?: unknown; code?: unknown }; message?: unknown } : {};
     const message = typeof envelope.error?.message === "string" ? envelope.error.message

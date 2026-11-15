@@ -1,6 +1,6 @@
 // Sign in + create account, one scene. The backdrop stays put while the card swaps,
 // so moving between the two feels like one place, not two pages.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import AuthScene, { Stroke } from "../components/AuthScene";
 import { useApp } from "../store";
@@ -49,16 +49,18 @@ function SignInForm({ who }: { who: Who }) {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [needsConfirmation, setNeedsConfirmation] = useState(false);
+  const inFlight = useRef(false);
   const notice = state && typeof state === "object" && "notice" in state && typeof state.notice === "string" ? state.notice : "";
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pending) return;
+    if (inFlight.current) return;
     if (!email.trim()) return setError("Enter your email.");
     if (!/^[^\s@]+@usc\.edu$/i.test(email.trim())) return setError("Use your @usc.edu email.");
     if (!password) return setError("Enter your OdySC password.");
     setError("");
     setNeedsConfirmation(false);
+    inFlight.current = true;
     setPending(true);
     try {
       const acct = await signIn(email.trim(), password, who);
@@ -67,7 +69,7 @@ function SignInForm({ who }: { who: Who }) {
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Sign-in could not be completed. Please try again.");
       setNeedsConfirmation(Boolean(failure && typeof failure === "object" && "code" in failure && failure.code === "EMAIL_CONFIRMATION_REQUIRED"));
-    } finally { setPending(false); }
+    } finally { inFlight.current = false; setPending(false); }
   };
 
   return (
@@ -83,6 +85,8 @@ function SignInForm({ who }: { who: Who }) {
         <label className="field" htmlFor="signin-email">USC email <span className="req">*</span></label>
         <input
           id="signin-email"
+          disabled={pending}
+          maxLength={254}
           className="input lg"
           type="email"
           autoComplete="email"
@@ -95,6 +99,8 @@ function SignInForm({ who }: { who: Who }) {
         <label className="field" htmlFor="signin-password">OdySC password <span className="req">*</span></label>
         <input
           id="signin-password"
+          disabled={pending}
+          maxLength={128}
           className="input lg"
           type="password"
           autoComplete="current-password"

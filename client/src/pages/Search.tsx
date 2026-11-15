@@ -18,7 +18,7 @@ export default function Search() {
     return clubs
       .filter((c) => cat === "All" || c.category === cat)
       .filter((c) => !openOnly || c.selectivity === "Open")
-      .filter((c) => !needle || `${c.name} ${c.shortName} ${c.tagline} ${c.category}`.toLowerCase().includes(needle))
+      .filter((c) => !needle || `${c.name} ${c.shortName} ${c.tagline} ${c.category} ${c.description}`.toLowerCase().includes(needle))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [clubs, q, cat, openOnly]);
 
@@ -27,7 +27,7 @@ export default function Search() {
     .filter((match) => Number.isFinite(match.score) && match.score > 0 && clubById(match.clubId))
     .sort((a, b) => b.score - a.score)
     .slice(0, 3);
-  const browsing = !q && cat === "All" && !openOnly;
+  const browsing = !q.trim() && cat === "All" && !openOnly;
   const scoreOf = (id: string) => matches.find((m) => m.clubId === id)?.score;
 
   return (
@@ -110,7 +110,7 @@ export default function Search() {
                   <Monogram club={c} size="sm" />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="row-title">{c.name}</div>
-                    <div className="subtle">{c.category} · {c.hoursPerWeek} · {c.selectivity === "Open" ? "Open to all" : c.selectivity === "Selective" ? "Selective" : "Membership details not posted"}</div>
+                    <div className="subtle">{[c.category, c.hoursPerWeek, c.selectivity === "Open" ? "Open to all" : c.selectivity === "Selective" ? "Selective" : "Membership details not posted"].filter(Boolean).join(" · ")}</div>
                   </div>
                   {score !== undefined && score >= 0.7 && <span className="pill hide-sm">{Math.round(score * 100)}% match</span>}
                   <span className="hide-sm"><DuePill iso={c.deadline} /></span>

@@ -1,13 +1,13 @@
 // Create-account form (lives inside the auth card). Students give the basics clubs need to
 // know who they are; the rest of the profile is finished later. Officers register for a club.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { OFFICER_ROLES } from "../data/reference";
 import { useApp } from "../store";
 
 const USC_EMAIL = /^[^\s@]+@usc\.edu$/i;
 const USC_ID = /^\d{10}$/;
-const STANDING = ["", "Freshman", "Sophomore", "Junior", "Senior"];
+const STANDING = ["", "Freshman", "Sophomore", "Junior", "Senior", "Fifth year+", "Graduate", "Other"];
 const YEARS = [2026, 2027, 2028, 2029, 2030, 2031];
 
 type Errors = Record<string, string>;
@@ -22,6 +22,7 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
   });
   const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
+  const inFlight = useRef(false);
   const set = (k: keyof typeof f, v: string | boolean) => {
     setF((x) => ({ ...x, [k]: v }));
     setErrors((e) => ({ ...e, [k]: "" }));
@@ -49,9 +50,10 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
 
   const submit = async (ev: React.FormEvent) => {
     ev.preventDefault();
-    if (pending) return;
+    if (inFlight.current) return;
     if (!validate()) return;
     const name = `${f.first.trim()} ${f.last.trim()}`;
+    inFlight.current = true;
     setPending(true);
     try {
       const result = role === "student" ? await signUpStudent({
@@ -65,7 +67,7 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
       else nav(role === "officer" ? "/org" : "/profile");
     } catch (failure) {
       setErrors((current) => ({ ...current, submit: failure instanceof Error ? failure.message : "Your account could not be created. Please try again." }));
-    } finally { setPending(false); }
+    } finally { inFlight.current = false; setPending(false); }
   };
 
   const err = (k: string) => errors[k] && <p id={`${k}-err`} className="field-error" role="alert">{errors[k]}</p>;
@@ -87,12 +89,12 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
         <div className="form-grid">
           <div>
             <label className="field" htmlFor="first">First name <span className="req">*</span></label>
-            <input id="first" className="input" autoComplete="given-name" value={f.first} onChange={(e) => set("first", e.target.value)} {...aria("first")} />
+            <input disabled={pending} id="first" maxLength={100} className="input" autoComplete="given-name" value={f.first} onChange={(e) => set("first", e.target.value)} {...aria("first")} />
             {err("first")}
           </div>
           <div>
             <label className="field" htmlFor="last">Last name <span className="req">*</span></label>
-            <input id="last" className="input" autoComplete="family-name" value={f.last} onChange={(e) => set("last", e.target.value)} {...aria("last")} />
+            <input disabled={pending} id="last" maxLength={100} className="input" autoComplete="family-name" value={f.last} onChange={(e) => set("last", e.target.value)} {...aria("last")} />
             {err("last")}
           </div>
 
@@ -100,30 +102,30 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
             <>
               <div>
                 <label className="field" htmlFor="preferred">Preferred name <span className="optional">Optional</span></label>
-                <input id="preferred" className="input" value={f.preferred} onChange={(e) => set("preferred", e.target.value)} />
+                <input disabled={pending} id="preferred" maxLength={100} className="input" value={f.preferred} onChange={(e) => set("preferred", e.target.value)} />
               </div>
               <div>
                 <label className="field" htmlFor="pronouns">Pronouns <span className="optional">Optional</span></label>
-                <input id="pronouns" className="input" placeholder="e.g. she/her" value={f.pronouns} onChange={(e) => set("pronouns", e.target.value)} />
+                <input disabled={pending} id="pronouns" maxLength={80} className="input" placeholder="e.g. she/her" value={f.pronouns} onChange={(e) => set("pronouns", e.target.value)} />
               </div>
             </>
           )}
 
           <div className="span-2">
             <label className="field" htmlFor="email">USC email <span className="req">*</span></label>
-            <input id="email" className="input" type="email" autoComplete="email" placeholder="ttrojan@usc.edu" value={f.email} onChange={(e) => set("email", e.target.value)} {...aria("email")} />
+            <input disabled={pending} id="email" maxLength={254} className="input" type="email" autoComplete="email" placeholder="ttrojan@usc.edu" value={f.email} onChange={(e) => set("email", e.target.value)} {...aria("email")} />
             {err("email")}
           </div>
 
           <div>
             <label className="field" htmlFor="signup-password">OdySC password <span className="req">*</span></label>
-            <input id="signup-password" className="input" type="password" autoComplete="new-password" maxLength={128} value={f.password} onChange={(e) => set("password", e.target.value)} {...aria("password")} />
+            <input disabled={pending} id="signup-password" className="input" type="password" autoComplete="new-password" maxLength={128} value={f.password} onChange={(e) => set("password", e.target.value)} {...aria("password")} />
             <p className="hint">Use 10–128 characters.</p>
             {err("password")}
           </div>
           <div>
             <label className="field" htmlFor="signup-confirm-password">Confirm password <span className="req">*</span></label>
-            <input id="signup-confirm-password" className="input" type="password" autoComplete="new-password" maxLength={128} value={f.confirmPassword} onChange={(e) => set("confirmPassword", e.target.value)} {...aria("confirmPassword")} />
+            <input disabled={pending} id="signup-confirm-password" className="input" type="password" autoComplete="new-password" maxLength={128} value={f.confirmPassword} onChange={(e) => set("confirmPassword", e.target.value)} {...aria("confirmPassword")} />
             {err("confirmPassword")}
           </div>
 
@@ -131,13 +133,13 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
             <>
               <div className="span-2">
                 <label className="field" htmlFor="uscId">USC ID number <span className="optional">Optional</span></label>
-                <input id="uscId" className="input" inputMode="numeric" maxLength={12} placeholder="10 digits" value={f.uscId} onChange={(e) => set("uscId", e.target.value)} {...aria("uscId")} />
+                <input disabled={pending} id="uscId" className="input" inputMode="numeric" maxLength={12} placeholder="10 digits" value={f.uscId} onChange={(e) => set("uscId", e.target.value)} {...aria("uscId")} />
                 <p className="hint">An optional private profile detail. It does not verify enrollment; share it with a club only if you explicitly choose to.</p>
                 {err("uscId")}
               </div>
               <div>
                 <label className="field" htmlFor="standing">Class <span className="req">*</span></label>
-                <select id="standing" className="input" value={f.standing} onChange={(e) => set("standing", e.target.value)} {...aria("standing")}>
+                <select disabled={pending} id="standing" className="input" value={f.standing} onChange={(e) => set("standing", e.target.value)} {...aria("standing")}>
                   {STANDING.map((s, i) => <option key={i} value={i}>{s || "Select"}</option>)}
                 </select>
                 {err("standing")}
@@ -145,11 +147,11 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
               <div>
                 <span className="field" id="grad-label">Expected graduation <span className="optional">Optional</span></span>
                 <div className="row" style={{ gap: 8 }} role="group" aria-labelledby="grad-label">
-                  <select className="input" aria-label="Semester" value={f.term} onChange={(e) => set("term", e.target.value)}>
+                  <select disabled={pending} className="input" aria-label="Semester" value={f.term} onChange={(e) => set("term", e.target.value)}>
                     <option>Spring</option>
                     <option>Fall</option>
                   </select>
-                  <select className="input" aria-label="Year" value={f.year} onChange={(e) => set("year", e.target.value)} {...aria("year")}>
+                  <select disabled={pending} className="input" aria-label="Year" value={f.year} onChange={(e) => set("year", e.target.value)} {...aria("year")}>
                     <option value="">Year</option>
                     {YEARS.map((y) => <option key={y}>{y}</option>)}
                   </select>
@@ -161,7 +163,7 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
             <>
               <div>
                 <label className="field" htmlFor="clubId">Club <span className="req">*</span></label>
-                <select id="clubId" className="input" value={f.clubId} onChange={(e) => set("clubId", e.target.value)} {...aria("clubId")}>
+                <select disabled={pending} id="clubId" className="input" value={f.clubId} onChange={(e) => set("clubId", e.target.value)} {...aria("clubId")}>
                   <option value="">Select your club</option>
                   {[...clubs].sort((a, b) => a.name.localeCompare(b.name)).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
@@ -169,7 +171,7 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
               </div>
               <div>
                 <label className="field" htmlFor="officerRole">Your role <span className="req">*</span></label>
-                <select id="officerRole" className="input" value={f.officerRole} onChange={(e) => set("officerRole", e.target.value)} {...aria("officerRole")}>
+                <select disabled={pending} id="officerRole" className="input" value={f.officerRole} onChange={(e) => set("officerRole", e.target.value)} {...aria("officerRole")}>
                   <option value="">Select</option>
                   {OFFICER_ROLES.map((r) => <option key={r}>{r}</option>)}
                 </select>
@@ -180,7 +182,7 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
         </div>
 
         <label className="check">
-          <input type="checkbox" checked={f.agree} onChange={(e) => set("agree", e.target.checked)} {...aria("agree")} />
+          <input disabled={pending} type="checkbox" checked={f.agree} onChange={(e) => set("agree", e.target.checked)} {...aria("agree")} />
           <span>
             {role === "student"
               ? "Clubs I apply to can see the profile I submit, including my name, preferred name, pronouns, USC email and class. My USC ID is optional and stays private unless I explicitly choose to share it with a club."

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import AuthScene from "../components/AuthScene";
 import { api } from "../api";
@@ -22,13 +22,15 @@ function EmailRequest({ confirmation }: { confirmation: boolean }) {
   const who = state && typeof state === "object" && "as" in state && state.as === "officer" || params.get("as") === "officer" ? "officer" : "student";
   const [email, setEmail] = useState(initialEmail);
   const [pending, setPending] = useState(false);
+  const inFlight = useRef(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (pending) return;
+    if (inFlight.current) return;
     if (!USC_EMAIL.test(email.trim())) return setError("Use your @usc.edu email.");
+    inFlight.current = true;
     setPending(true);
     setError("");
     setNotice("");
@@ -37,7 +39,7 @@ function EmailRequest({ confirmation }: { confirmation: boolean }) {
       setNotice(result.message);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "The email request could not be completed. Please try again.");
-    } finally { setPending(false); }
+    } finally { inFlight.current = false; setPending(false); }
   };
 
   return (
@@ -54,6 +56,8 @@ function EmailRequest({ confirmation }: { confirmation: boolean }) {
         <label className="field" htmlFor="email-request">USC email <span className="req">*</span></label>
         <input
           id="email-request"
+          disabled={pending}
+          maxLength={254}
           className="input lg"
           type="email"
           autoComplete="email"
@@ -92,6 +96,7 @@ export function ResetPassword() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pending, setPending] = useState(false);
+  const inFlight = useRef(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -106,9 +111,10 @@ export function ResetPassword() {
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (pending || !valid) return;
+    if (inFlight.current || !valid) return;
     if (password.length < 10 || password.length > 128) return setError("Use 10–128 characters for your new password.");
     if (password !== confirmPassword) return setError("The passwords do not match.");
+    inFlight.current = true;
     setPending(true);
     setError("");
     try {
@@ -119,7 +125,7 @@ export function ResetPassword() {
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Your password could not be updated. Please try again.");
       if (failure && typeof failure === "object" && "status" in failure && failure.status === 401) setValid(false);
-    } finally { setPending(false); }
+    } finally { inFlight.current = false; setPending(false); }
   };
 
   return (
@@ -130,10 +136,10 @@ export function ResetPassword() {
         <form onSubmit={submit} noValidate aria-busy={pending}>
           <p className="req-note"><span className="req">*</span> Required</p>
           <label className="field" htmlFor="reset-password">New password <span className="req">*</span></label>
-          <input id="reset-password" className="input lg" type="password" autoComplete="new-password" maxLength={128} value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} aria-invalid={!!error} aria-describedby={error ? "reset-error" : "reset-note"} />
+          <input disabled={pending} id="reset-password" className="input lg" type="password" autoComplete="new-password" maxLength={128} value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} aria-invalid={!!error} aria-describedby={error ? "reset-error" : "reset-note"} />
           <p id="reset-note" className="hint">Use 10–128 characters.</p>
           <label className="field" htmlFor="reset-confirm-password">Confirm new password <span className="req">*</span></label>
-          <input id="reset-confirm-password" className="input lg" type="password" autoComplete="new-password" maxLength={128} value={confirmPassword} onChange={(event) => { setConfirmPassword(event.target.value); setError(""); }} aria-invalid={!!error} aria-describedby={error ? "reset-error" : undefined} />
+          <input disabled={pending} id="reset-confirm-password" className="input lg" type="password" autoComplete="new-password" maxLength={128} value={confirmPassword} onChange={(event) => { setConfirmPassword(event.target.value); setError(""); }} aria-invalid={!!error} aria-describedby={error ? "reset-error" : undefined} />
           {error && <p id="reset-error" className="field-error" role="alert">{error}</p>}
           <div className="auth-actions">
             <button className="btn pill-red" type="submit" disabled={pending}>{pending ? "Updating password…" : "Update password"}</button>
@@ -146,8 +152,8 @@ export function ResetPassword() {
         </>
       )}
       <div className="auth-actions">
-        <Link to="/forgot-password" className="text-link">Request a new reset link</Link>
-        <Link to="/signin" className="text-link">Back to sign in</Link>
+        <Link to="/forgot-password" className="text-link" aria-disabled={pending} onClick={(event) => { if (inFlight.current) event.preventDefault(); }}>Request a new reset link</Link>
+        <Link to="/signin" className="text-link" aria-disabled={pending} onClick={(event) => { if (inFlight.current) event.preventDefault(); }}>Back to sign in</Link>
       </div>
     </FlowCard>
   );

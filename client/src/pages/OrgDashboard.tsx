@@ -3,7 +3,7 @@
 // together: everyone scores on the same rubric, OdySC averages the scores and flags a
 // reviewer who grades far off from the rest. Admins invite reviewers, decide, and choose
 // whether the club needs USC IDs (students must agree before theirs is shared).
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Applicant, TeamMember } from "../../../shared/types";
 import { api } from "../api";
 import HomeBand from "../components/HomeBand";
@@ -51,17 +51,30 @@ export default function OrgDashboard() {
     setList(null);
     setLoadedFor("");
     setLoadError("");
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let loading = false;
+    const load = () => {
+      if (loading || document.visibilityState === "hidden") return;
+      loading = true;
+      api.applicants(clubId).then((applicants) => {
+        if (active) { setList(applicants); setLoadedFor(accessKey); setLoadError(""); }
+      }).catch((failure: unknown) => {
+        if (active) setLoadError(failure instanceof Error ? failure.message : "Applications could not be loaded.");
+      }).finally(() => { loading = false; });
+    };
     if (ready && account?.role === "officer" && clubId && myMembership?.status === "active") {
-      api.applicants(clubId).then((applicants) => { if (active) { setList(applicants); setLoadedFor(accessKey); } })
-        .catch((failure: unknown) => { if (active) setLoadError(failure instanceof Error ? failure.message : "Applications could not be loaded."); });
+      load();
+      timer = setInterval(load, 30_000);
+      window.addEventListener("focus", load);
+      document.addEventListener("visibilitychange", load);
     }
-    return () => { active = false; };
+    return () => { active = false; clearInterval(timer); window.removeEventListener("focus", load); document.removeEventListener("visibilitychange", load); };
   }, [ready, account?.role, clubId, myMembership?.status, accessKey, reload]);
 
   if (!ready) return <Loading />;
   if (!clubId || !club) return <div className="card"><h1 className="h2">Club access is not available</h1><p className="subtle">Your account does not have a club workspace available. Ask a club admin or the project operator to check your membership.</p></div>;
   if (!myMembership || myMembership.status !== "active") return <Pending clubName={club.name} admins={(teams[clubId] ?? []).filter((m) => m.access === "admin" && m.status === "active")} />;
-  if (loadError) return <div className="card"><p className="field-error" role="alert">{loadError}</p><button className="btn primary" onClick={() => setReload((value) => value + 1)}>Try again</button></div>;
+  if (loadError && (!list || loadedFor !== accessKey)) return <div className="card"><p className="field-error" role="alert">{loadError}</p><button className="btn primary" onClick={() => setReload((value) => value + 1)}>Try again</button></div>;
   if (!list || loadedFor !== accessKey) return <Loading />;
   const all = list;
 
@@ -73,9 +86,10 @@ export default function OrgDashboard() {
 
   return (
     <>
+      {loadError && <div className="alert danger" role="alert"><p>{loadError} The last loaded applications are shown.</p><button className="btn sm" onClick={() => setReload((value) => value + 1)}>Try again</button></div>}
       <HomeBand
         kicker={`${club.shortName} · ${myMembership?.officerRole ?? account?.officerRole ?? "Officer"}`}
-        title={<>Hey {first}, <em>{all.length} applicants</em> are waiting on your e-board.</>}
+        title={<>Hey {first}, <em>{all.length} application{all.length === 1 ? "" : "s"}</em> in your club workspace.</>}
         sub={`Recruiting · ${team.filter((m) => m.status === "active").length} reviewers · ${isAdmin ? "You're an admin" : "You can score applicants"}`}
       >
         <div className="stat-chips">
@@ -159,6 +173,7 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
   const [blind, setBlind] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const inFlight = useRef(false);
   const toast = useToast();
   const me = account?.email ?? "";
   const team = teams[clubId] ?? [];
@@ -187,13 +202,18 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
 
   const iv = interviews[a.applicationId];
   const decision = decisions[a.applicationId];
+  // Organization decisions refresh after each mutation; the fetched applicant status is a fallback.
+  const status = decision === "accept" ? "accepted" : decision === "decline" ? "rejected" : a.status === "accepted" || a.status === "rejected" ? a.status : decision === "advance" ? "interview" : a.status ?? (iv ? "interview" : "submitted");
+  const final = status === "accepted" || status === "rejected";
+  const activeInterview = status === "interview" ? iv : undefined;
   const run = async (action: () => Promise<void>, notice?: string) => {
-    if (busy) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError("");
     try { await action(); if (notice) toast.show(notice); }
     catch (failure) { setError(failure instanceof Error ? failure.message : "The change could not be saved."); }
-    finally { setBusy(false); }
+    finally { inFlight.current = false; setBusy(false); }
   };
   const doDecide = (d: Decision) => run(() => decide(a.applicationId, d), d === "accept" ? `${label(a, activeIndex)} was accepted in OdySC.` : d === "advance" ? `${label(a, activeIndex)} moved to interviews.` : "Application declined in OdySC.");
 
@@ -201,7 +221,7 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
     <>
       {error && <p className="field-error" role="alert">{error}</p>}
       <div className="row between wrap" style={{ marginBottom: 14, gap: 12 }}>
-        <p className="subtle" style={{ margin: 0 }}>{Object.keys(decisions).filter((k) => list.some((x) => x.applicationId === k)).length} of {list.length} decided</p>
+        <p className="subtle" style={{ margin: 0 }}>{list.filter((entry) => { const decision = decisions[entry.applicationId]; return decision === "accept" || decision === "decline" || !decision && (entry.status === "accepted" || entry.status === "rejected"); }).length} of {list.length} decided</p>
         <label className="toggle" title="Hide names, emails and majors while you score">
           <input type="checkbox" checked={blind} onChange={(e) => setBlind(e.target.checked)} />
           Blind review
@@ -210,11 +230,11 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
       <div className="org-layout">
         <aside className="card" style={{ padding: 8, alignSelf: "start" }}>
           {list.map((x, i) => {
-            const d = decisions[x.applicationId];
+            const d = x.status === "accepted" ? "accept" : x.status === "rejected" ? "decline" : decisions[x.applicationId] ?? (x.status === "interview" ? "advance" : undefined);
             const scoredIt = CRITERIA.every((c) => scores[x.applicationId]?.[me]?.[c]);
             const t = scoredIt ? avg(Object.values(scores[x.applicationId] ?? {}).map(total).filter(Boolean)) : 0;
             return (
-              <button key={x.applicationId} className={`applicant ${i === activeIndex ? "active" : ""}`} onClick={() => setSel(i)}>
+              <button key={x.applicationId} className={`applicant ${i === activeIndex ? "active" : ""}`} disabled={busy || scheduling} onClick={() => { setSel(i); setError(""); }}>
                 <div className="row between">
                   <span style={{ fontWeight: 600 }}>{label(x, i)}</span>
                   {d ? <span className={`pill ${d === "decline" ? "" : d === "accept" ? "ok" : "gold"}`}>{d === "accept" ? "Accepted" : d === "decline" ? "Declined" : interviews[x.applicationId]?.booked ? "Booked" : "Interview"}</span>
@@ -272,9 +292,9 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
                 <span style={{ fontWeight: 600, fontSize: 14 }}>Application summary</span>
                 <span className="subtle">Suggests · never decides</span>
               </div>
-              <p style={{ margin: "6px 0 10px", fontSize: 14 }}>{a.summary?.summary || "A summary is not available. Review the submitted answers below."}</p>
+              <p style={{ margin: "6px 0 10px", fontSize: 14 }}>{blind ? "Summary hidden during blind review because it can include identifying profile details." : a.summary?.summary || "A summary is not available. Review the submitted answers below."}</p>
               <div className="row wrap" style={{ gap: 6 }}>
-                {(a.summary?.evidence ?? []).map((e) => <span key={e} className="chip">Evidence: {e}</span>)}
+                {!blind && (a.summary?.evidence ?? []).map((e) => <span key={e} className="chip">Evidence: {e}</span>)}
               </div>
             </div>
           </div>
@@ -332,13 +352,13 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
                 </div>
               );
             })}
-            {iv && <InterviewStatus iv={iv} name={blind ? "the applicant" : a.preferredName || a.name} onEdit={isAdmin ? () => setScheduling(true) : undefined} />}
+            {activeInterview && <InterviewStatus iv={activeInterview} name={blind ? "the applicant" : a.preferredName || a.name} onEdit={isAdmin && !busy ? () => setScheduling(true) : undefined} />}
             <div className="decide-row">
               {isAdmin ? (
                 <>
-                  {decision === "accept" || decision === "decline" ? (
-                    <span className="subtle">{decision === "accept" ? "Accepted." : "Declined."} <button className="link-act" disabled={busy} onClick={() => { void doDecide("advance"); }}>Undo</button></span>
-                  ) : iv ? (
+                  {final ? (
+                    <span className="subtle">{status === "accepted" ? "Accepted." : "Declined."} This decision is final.</span>
+                  ) : activeInterview ? (
                     <>
                       <button className="btn primary" disabled={busy} onClick={() => { void doDecide("accept"); }}>Accept</button>
                       <button className="btn" disabled={busy} onClick={() => { void doDecide("decline"); }}>Decline</button>
@@ -359,12 +379,13 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
           </div>
         </section>
       </div>
-      {scheduling && isAdmin && (
+      {scheduling && isAdmin && !final && (
         <ScheduleModal
+          key={a.applicationId}
           appId={a.applicationId}
           clubId={clubId}
           name={blind ? "this applicant" : a.preferredName ? `${a.preferredName} ${a.name.split(" ").slice(-1)[0]}` : a.name}
-          existing={iv}
+          existing={activeInterview}
           onClose={() => setScheduling(false)}
           onSent={() => { setScheduling(false); toast.show("Interview invitation saved. The applicant can choose a time in OdySC."); }}
         />
@@ -381,36 +402,42 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
   const [f, setF] = useState({ email: "", name: "", role: "Vice President" });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
   const toast = useToast();
   const pending = team.filter((m) => m.status === "pending");
   const rest = team.filter((m) => m.status !== "pending");
 
   const invite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (busy) return;
+    if (inFlight.current) return;
     if (!/^[^\s@]+@usc\.edu$/i.test(f.email.trim())) return setErr("Use the reviewer's @usc.edu email.");
+    if (!f.name.trim() || f.name.trim().length > 100) return setErr("Enter the reviewer's name using 1–100 characters.");
+    inFlight.current = true;
     setBusy(true);
     setErr(null);
     try {
-      const result = await inviteMember(f.email, f.name, f.role);
+      const result = await inviteMember(f.email.trim(), f.name.trim(), f.role);
       setErr(result);
       if (!result) {
         toast.show(`Invitation recorded for ${f.email.trim()} in OdySC. Share the signup link with them.`);
         setF({ email: "", name: "", role: "Vice President" });
       }
     } catch (failure) { setErr(failure instanceof Error ? failure.message : "The invitation could not be saved."); }
-    finally { setBusy(false); }
+    finally { inFlight.current = false; setBusy(false); }
   };
   const changeMember = async (action: () => Promise<void>, notice: string) => {
-    if (busy) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setErr(null);
     try { await action(); toast.show(notice); }
     catch (failure) { setErr(failure instanceof Error ? failure.message : "The membership change could not be saved."); }
-    finally { setBusy(false); }
+    finally { inFlight.current = false; setBusy(false); }
   };
 
   return (
+    <>
+    {err && <p className="field-error" role="alert">{err}</p>}
     <div className="team-grid">
       <div style={{ display: "grid", gap: 16 }}>
         {isAdmin && pending.length > 0 && (
@@ -456,12 +483,11 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
             <h2 className="h3">Invite a reviewer</h2>
             <p className="subtle" style={{ marginTop: 0 }}>Record their USC email here, then share the signup link. They must confirm that mailbox before using their account.</p>
             <label className="field" htmlFor="inv-email">USC email <span className="req">*</span></label>
-            <input id="inv-email" className="input" type="email" value={f.email} onChange={(e) => { setF({ ...f, email: e.target.value }); setErr(null); }} placeholder="ttrojan@usc.edu" aria-invalid={!!err} />
-            {err && <p className="field-error" role="alert">{err}</p>}
-            <label className="field" htmlFor="inv-name" style={{ marginTop: 12 }}>Name</label>
-            <input id="inv-name" className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Tommy Trojan" />
+            <input id="inv-email" className="input" type="email" value={f.email} disabled={busy} maxLength={254} onChange={(e) => { setF({ ...f, email: e.target.value }); setErr(null); }} placeholder="ttrojan@usc.edu" />
+            <label className="field" htmlFor="inv-name" style={{ marginTop: 12 }}>Name <span className="req">*</span></label>
+            <input id="inv-name" className="input" disabled={busy} maxLength={100} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Tommy Trojan" />
             <label className="field" htmlFor="inv-role" style={{ marginTop: 12 }}>Role</label>
-            <select id="inv-role" className="input" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>
+            <select id="inv-role" className="input" disabled={busy} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>
               {OFFICER_ROLES.map((r) => <option key={r}>{r}</option>)}
             </select>
             <button className="btn primary" type="submit" disabled={busy} style={{ marginTop: 16, width: "100%" }}>{busy ? "Saving…" : "Invite reviewer"}</button>
@@ -480,6 +506,7 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
       </div>
       <Toast message={toast.msg} onDone={toast.clear} />
     </div>
+    </>
   );
 }
 
@@ -536,7 +563,7 @@ function Settings({ clubId }: { clubId: string }) {
         <div className="reveal" style={{ marginTop: 14 }}>
           {on && <>
           <label className="field" htmlFor="id-reason">Why you need it <span className="req">*</span></label>
-          <textarea id="id-reason" className="input" rows={3} value={reason} disabled={pending} onChange={(e) => { setReason(e.target.value); setSaved(false); setError(""); }} placeholder="e.g. Our venue needs a list of USC IDs for building access." aria-invalid={!!error && tooShort} />
+          <textarea id="id-reason" className="input" maxLength={1000} rows={3} value={reason} disabled={pending} onChange={(e) => { setReason(e.target.value); setSaved(false); setError(""); }} placeholder="e.g. Our venue needs a list of USC IDs for building access." aria-invalid={!!error && tooShort} />
           {tooShort && <p className="subtle" style={{ fontSize: 13 }}>Write at least a full sentence. Students read this before deciding.</p>}
           </>}
           {error && <p className="field-error" role="alert">{error}</p>}

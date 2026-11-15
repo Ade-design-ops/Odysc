@@ -9,7 +9,7 @@ import { AddButton, DuePill, Loading, Monogram, Ring } from "../components/ui";
 import { PHOTOS } from "../photos";
 import { InterviewBooking } from "../components/Interview";
 import { appState, useApp } from "../store";
-import { fmtDate, similarity, daysUntil, wordCount } from "../util";
+import { fmtDate, similarity, daysUntil, deadlinePassed, wordCount } from "../util";
 
 type Step = "overview" | "questions" | "review";
 
@@ -54,7 +54,7 @@ export default function MyClubs() {
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span className="row-title ellipsis">{c.shortName}</span>
                   <span className="subtle" style={{ display: "block", fontSize: 12 }}>
-                    {st.label}{st.status === "draft" ? ` · ${!c.deadline ? "No deadline posted" : daysUntil(c.deadline) >= 0 ? `due ${fmtDate(c.deadline)}` : "closed"}` : ""}
+                    {st.label}{st.status === "draft" ? ` · ${!c.deadline ? "No deadline posted" : deadlinePassed(c.deadline) ? "closed" : `due ${fmtDate(c.deadline)}`}` : ""}
                   </span>
                 </span>
               </Link>
@@ -121,6 +121,7 @@ function ClubPane({ club }: { club: Club }) {
 
 function Overview({ club, onStart }: { club: Club; onStart: () => void }) {
   const { events, reminders, toggleReminder, removeClub } = useApp();
+  const [removing, setRemoving] = useState(false);
   const nav = useNavigate();
   return (
     <div className="stack" style={{ gap: 18 }}>
@@ -128,10 +129,11 @@ function Overview({ club, onStart }: { club: Club; onStart: () => void }) {
       <div className="row between wrap">
         <label className="toggle">
           <input type="checkbox" disabled={!club.deadline} checked={Boolean(club.deadline) && reminders.includes(club.id)} onChange={() => { void toggleReminder(club.id).catch(() => {}); }} />
-          Remind me 48 hours before the deadline
+          Save a deadline reminder preference
         </label>
         <button className="btn primary" onClick={onStart}>Start questions</button>
       </div>
+      <p className="subtle">Automatic reminder delivery is not connected yet. Add club events to your calendar or download their .ics files for calendar alerts.</p>
       <details className="disclose">
         <summary>Info sessions & events</summary>
         <EventList club={club} events={events} />
@@ -142,12 +144,15 @@ function Overview({ club, onStart }: { club: Club; onStart: () => void }) {
       </details>
       <button
         className="btn ghost sm"
+        disabled={removing}
         style={{ alignSelf: "flex-start", color: "var(--ink-3)" }}
         onClick={async () => {
+          setRemoving(true);
           try { await removeClub(club.id); nav("/my-clubs"); } catch { /* The shared error toast explains the failure. */ }
+          finally { setRemoving(false); }
         }}
       >
-        Remove from my list
+        {removing ? "Removing…" : "Remove from my list"}
       </button>
     </div>
   );
@@ -232,21 +237,21 @@ function Review({ club, onEdit }: { club: Club; onEdit: () => void }) {
   const draft = drafts[club.id] ?? {};
   const missing = club.questions.filter((q) => !(draft[q.id] ?? "").trim());
   const over = club.questions.filter((q) => q.maxWords && wordCount(draft[q.id] ?? "") > q.maxWords);
-  const closed = !!club.deadline && daysUntil(club.deadline) < 0;
+  const closed = deadlinePassed(club.deadline);
   const problems = [
     ...(!profileDone ? ["Finish your profile first."] : []),
     ...missing.map((q) => `Answer: "${q.prompt}"`),
     ...over.map((q) => `Shorten: "${q.prompt}" (over ${q.maxWords} words)`),
     ...(closed ? ["This application is closed."] : []),
     ...(club.requiresUscId && !consent ? [`Agree to share your USC ID with ${club.shortName}.`] : []),
-    ...(club.requiresUscId && !profile.uscId ? ["Add your USC ID to your profile before sharing it with this club."] : []),
+    ...(club.requiresUscId && !/^\d{10}$/.test(profile.uscId ?? "") ? ["Add your complete 10-digit USC ID to your profile before sharing it with this club."] : []),
   ];
 
   return (
     <div className="stack" style={{ gap: 18 }}>
       <div className="review-block">
         <div className="subtle">Profile shared with {club.shortName}</div>
-        <div>{profile.name} · {profile.major || "—"} · {["", "Freshman", "Sophomore", "Junior", "Senior"][profile.year] || "—"}</div>
+        <div>{profile.name} · {profile.major || "—"} · {["", "Freshman", "Sophomore", "Junior", "Senior", "Fifth year or later", "Graduate", "Other"][profile.year] || "—"}</div>
         <div className="subtle">{profile.skills.join(", ")}</div>
         <div className="subtle" style={{ marginTop: 6 }}>{club.requiresUscId ? "Your USC ID is shared only if you agree below." : `Your USC ID stays private. ${club.shortName} won't see it.`}</div>
       </div>
@@ -263,7 +268,7 @@ function Review({ club, onEdit }: { club: Club; onEdit: () => void }) {
           <span>
             <strong>Share my USC ID ({"•••••• " + (profile.uscId ?? "").slice(-4)}) with {club.shortName}</strong>
             <span className="subtle">Why they need it: {club.uscIdReason || "They didn't give a reason."}</span>
-            <span className="subtle">Only {club.shortName}'s verified officers will see it, and only for this application.</span>
+            <span className="subtle">Only {club.shortName}'s approved officers will see it, and only for this application.</span>
           </span>
         </label>
       )}
@@ -336,10 +341,10 @@ function Status({ club, status }: { club: Club; status: AppStatus }) {
         <div className="free-agent reveal">
           <h3 className="h3">{club.shortName} didn't accept you this time</h3>
           <p className="muted" style={{ margin: "4px 0 14px" }}>
-            These clubs match your profile, accept everyone, and are still taking applications. Your saved answers will carry over.
+            These clubs match your profile, list open membership, and have an upcoming application deadline. You can reuse answers you chose to save.
           </p>
           {reroutes.length === 0 ? (
-            <p className="subtle">Every club that matches your profile is already on your list.</p>
+            <p className="subtle">No other open clubs with a confirmed upcoming deadline match your profile yet.</p>
           ) : (
             <div className="card list">
               {reroutes.map(({ m, c }) => (

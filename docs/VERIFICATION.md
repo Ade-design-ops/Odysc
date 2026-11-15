@@ -1,10 +1,10 @@
-# Integration verification — November 14, 2026
+# Integration verification — November 15, 2026
 
-The working copy is the original `Odysc` repository. Changes remain uncommitted and unpushed for team review.
+The working copy is the original `Odysc` repository. The current feature inventory and remaining limitations are recorded in the full audit below.
 
 ## Completed checks
 
-- Backend test suite: **135 passed**, none failed or skipped. Includes browser transport, authentication, ownership, PDF handling, application permissions, and interview regressions.
+- Backend test suite: **147 passed**, none failed or skipped. Includes browser transport, authentication, ownership, PDF handling, application permissions, and interview regressions.
 - Backend TypeScript build and frontend production build pass.
 - The frontend stylesheet and shared AuthScene, HomeBand, and photo assets are unchanged from the teammate's frontend commit. The built CSS asset remains `index-DBY9zGoV.css`.
 - Live local HTTP checks passed: anonymous directory/session, confirmed USC login, a single HttpOnly session cookie, application readback, stale-account rejection, missing-actor rejection, unrelated-club denial, and logout.
@@ -22,3 +22,5 @@ Review the interface and workflows with teammates before committing or pushing. 
 ## External services still to verify
 
 Real inbox confirmation/password-reset delivery and deployed callback URLs need the final frontend host and a real email test. Matching may use the documented heuristic fallback; summaries are grounded in submitted text. Reminder preferences are saved in-app, with no scheduled email delivery. Video meeting creation/OAuth is not configured; use an existing meeting link. PDF storage requires a persistent backend volume and one instance. Dependency findings and upstream backports are recorded in [dependency review](DEPENDENCY_REVIEW.md).
+
+The November 15 full control audit and current feature inventory are recorded in [PROTOTYPE_AUDIT.md](PROTOTYPE_AUDIT.md).

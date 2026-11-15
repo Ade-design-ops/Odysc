@@ -41,9 +41,9 @@ export default function App() {
 
   return (
     <div className="shell">
-      <a href="#main" className="sr-only">Skip to content</a>
+      <a href="#main" className="sr-only" onClick={(event) => { event.preventDefault(); const main = document.getElementById("main"); main?.focus(); main?.scrollIntoView(); }}>Skip to content</a>
       <Nav />
-      <main id="main" className={`container page-fade ${landing ? "is-landing" : ""}`} key={pathname.split("/")[1] || "home"}>
+      <main id="main" tabIndex={-1} className={`container page-fade ${landing ? "is-landing" : ""}`} key={pathname.split("/")[1] || "home"}>
         <Routes>
           <Route path="/" element={!account ? <Landing /> : role === "officer" ? <Navigate to="/org" replace /> : <Dashboard />} />
           <Route path="/profile" element={student(<Profile />)} />
