@@ -708,3 +708,46 @@ test("offered PostgreSQL Date slots retain millisecond precision when booking", 
   state.app={...state.app,status:"interview"}; state.offeredSlots=[slot];
   await assert.doesNotReject(()=>store.book(actor,appId,slot.toISOString()));
 });
+test("recruiting timelines accept real milestones and reject invalid ones", () => {
+  const valid = validated(clubSettingsSchema, {
+    selectivity: "Selective",
+    recruitmentTimeline: [
+      { id: "due", step: "Applications due", date: "2027-01-20" },
+      { id: "open", step: "Applications open", date: "2027-01-06", note: "Apply on OdySC." },
+      { id: "iv", step: "Interviews", date: "2027-01-24", endDate: "2027-01-26" },
+    ],
+  });
+  assert.equal(valid.recruitmentTimeline?.length, 3);
+  for (const recruitmentTimeline of [
+    [{ id: "a", step: "Interviews", date: "2027-02-30" }],
+    [{ id: "a", step: "Interviews", date: "2027-01-26", endDate: "2027-01-24" }],
+    [{ id: "a", step: "Other", date: "2027-01-26" }],
+    [{ id: "a", step: "Rush week", date: "2027-01-26" }],
+    [{ id: "a", step: "Interviews", date: "2027-01-26" }, { id: "a", step: "Decisions released", date: "2027-01-30" }],
+    Array.from({ length: 13 }, (_, index) => ({ id: `m${index}`, step: "Info session", date: "2027-01-26" })),
+  ])
+    assert.throws(
+      () => validated(clubSettingsSchema, { recruitmentTimeline }),
+      (error) => error instanceof HttpError && error.statusCode === 400,
+    );
+});
+test("students receive a club's recruiting timeline in date order", () => {
+  const club = frontendClub(directoryClub, {
+    selectivity: "Selective",
+    recruitmentTimeline: [
+      { id: "due", step: "Applications due", date: "2027-01-20" },
+      { id: "open", step: "Applications open", date: "2027-01-06" },
+    ],
+  });
+  assert.deepEqual(club.recruitmentTimeline.map((item) => item.id), ["open", "due"]);
+  assert.deepEqual(frontendClub(directoryClub, {}).recruitmentTimeline, []);
+});
+test("only club administrators can save a recruiting timeline", async () => {
+  const { store, state, calls } = databaseFixture();
+  state.membership = member("reviewer");
+  await assert.rejects(
+    store.updateSettings(actor, "1", { recruitmentTimeline: [{ id: "open", step: "Applications open", date: "2027-01-06" }] }),
+    (error) => error instanceof HttpError && error.statusCode === 403,
+  );
+  assert.equal(calls.some((call) => call.sql.startsWith("INSERT INTO public.odysc_club_settings")), false);
+});

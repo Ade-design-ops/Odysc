@@ -8,6 +8,7 @@ import type { Applicant, TeamMember } from "../../../shared/types";
 import { api } from "../api";
 import HomeBand from "../components/HomeBand";
 import ClubEvents from "../components/ClubEvents";
+import RecruitingTimeline from "../components/RecruitingTimeline";
 import { Loading, Toast, useToast } from "../components/ui";
 import { OFFICER_ROLES } from "../data/reference";
 import { FormatIcon, InterviewStatus, ScheduleModal } from "../components/Interview";
@@ -88,7 +89,7 @@ export default function OrgDashboard() {
       <div className="org-tabs" role="tablist" aria-label="Club dashboard">
         {(["applicants", "team", "events", ...(isAdmin ? ["settings"] : [])] as Tab[]).map((t) => (
           <button key={t} role="tab" aria-selected={selectedTab === t} className={selectedTab === t ? "on" : ""} onClick={() => setTab(t)}>
-            {t === "applicants" ? "Applicants" : t === "team" ? "E-board" : t === "events" ? "Events" : "Settings"}
+            {t === "applicants" ? "Applicants" : t === "team" ? "E-board" : t === "events" ? "Recruiting & events" : "Settings"}
             {t === "team" && waiting > 0 && isAdmin && <span className="badge">{waiting}</span>}
           </button>
         ))}
@@ -96,7 +97,12 @@ export default function OrgDashboard() {
 
       {selectedTab === "applicants" && <Applicants list={all} clubId={clubId} isAdmin={isAdmin} />}
       {selectedTab === "team" && <Team clubId={clubId} isAdmin={isAdmin} />}
-      {selectedTab === "events" && <ClubEvents key={`${clubId}:${account?.email ?? ""}`} clubId={clubId} isAdmin={isAdmin} />}
+      {selectedTab === "events" && (
+        <div className="workspace-stack">
+          <RecruitingTimeline key={`rt:${clubId}:${account?.email ?? ""}`} clubId={clubId} isAdmin={isAdmin} />
+          <ClubEvents key={`${clubId}:${account?.email ?? ""}`} clubId={clubId} isAdmin={isAdmin} />
+        </div>
+      )}
       {selectedTab === "settings" && isAdmin && <Settings clubId={clubId} />}
     </>
   );

@@ -1,6 +1,6 @@
 // Same-origin API transport. Vite forwards /api to the backend in development.
 // Browser sessions are HttpOnly cookies; tokens and passwords are never persisted here.
-import type { Account, Applicant, Application, AnswerBankEntry, AppStatus, Club, ClubEvent, Interview, Match, PersonalEvent, Student, TeamMember } from "../../shared/types";
+import type { Account, Applicant, Application, AnswerBankEntry, AppStatus, Club, ClubEvent, Interview, Match, PersonalEvent, RecruitmentMilestone, Student, TeamMember } from "../../shared/types";
 
 export const USE_MOCKS = false;
 // Consistency only: the server authenticates the cookie and checks all permissions.
@@ -13,6 +13,8 @@ export interface ClubSettings {
   uscIdReason?: string;
   zoomConnected?: boolean;
   teamsConnected?: boolean;
+  selectivity?: Club["selectivity"];
+  recruitmentTimeline?: RecruitmentMilestone[];
 }
 export interface ClubApplicationState {
   status: AppStatus;

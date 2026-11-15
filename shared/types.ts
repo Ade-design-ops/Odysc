@@ -68,6 +68,27 @@ export interface Club {
   zoomConnected?: boolean;
   teamsConnected?: boolean;
   questions: Question[];
+  /** Posted by clubs that recruit; dates are calendar days (YYYY-MM-DD). */
+  recruitmentTimeline?: RecruitmentMilestone[];
+}
+
+export type RecruitmentStep =
+  | "Applications open"
+  | "Info session"
+  | "Applications due"
+  | "Interviews"
+  | "Decisions released"
+  | "New member onboarding"
+  | "Other";
+
+export interface RecruitmentMilestone {
+  id: string;
+  step: RecruitmentStep;
+  /** Required when step is "Other"; optional rename otherwise. */
+  title?: string;
+  date: string;
+  endDate?: string;
+  note?: string;
 }
 
 export type AppStatus = "draft" | "submitted" | "interview" | "accepted" | "rejected";

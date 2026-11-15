@@ -2,6 +2,7 @@
 // who they are, the facts, and one button — add it to your list.
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Contacts, EventList, Facts } from "../components/ClubBits";
+import { TimelineView, clubRecruits } from "../components/RecruitingTimeline";
 import { DuePill, Loading, MatchMeter, Monogram } from "../components/ui";
 import { useApp } from "../store";
 
@@ -47,6 +48,12 @@ export default function ClubPage() {
       <p className="muted" style={{ fontSize: 16 }}>{club.description}</p>
       <Facts club={club} />
 
+      {clubRecruits(club) && (
+        <details className="disclose" open>
+          <summary>Recruiting timeline</summary>
+          <TimelineView items={club.recruitmentTimeline ?? []} />
+        </details>
+      )}
       <details className="disclose">
         <summary>Info sessions & events</summary>
         <EventList club={club} events={events} />

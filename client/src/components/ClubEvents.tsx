@@ -38,8 +38,8 @@ export default function ClubEvents({ clubId, isAdmin }: { clubId: string; isAdmi
     <section className="card panel" aria-labelledby="club-events-heading">
       <div className="section-head">
         <div>
-          <h2 id="club-events-heading" className="h3">Club events</h2>
-          <p className="subtle">Published events appear on {club.shortName}'s club page for students to find.</p>
+          <h2 id="club-events-heading" className="h3">Programming events</h2>
+          <p className="subtle">Info sessions, mixers, workshops and coffee chats. Every club can post these, whether or not you recruit. They appear on {club.shortName}'s club page.</p>
         </div>
         {isAdmin && <button ref={publishButton} className="btn primary" onClick={() => { setNotice(""); setCreating(true); }}>Publish event</button>}
       </div>

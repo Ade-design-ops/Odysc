@@ -92,6 +92,24 @@ export interface FrontendClub {
     maxWords?: number;
   }[];
   websiteUrl?: string | null;
+  recruitmentTimeline: RecruitmentMilestone[];
+}
+export const RECRUITMENT_STEPS = [
+  "Applications open",
+  "Info session",
+  "Applications due",
+  "Interviews",
+  "Decisions released",
+  "New member onboarding",
+  "Other",
+] as const;
+export interface RecruitmentMilestone {
+  id: string;
+  step: (typeof RECRUITMENT_STEPS)[number];
+  title?: string;
+  date: string;
+  endDate?: string;
+  note?: string;
 }
 export interface FrontendWorkspace {
   version: number;
@@ -270,6 +288,31 @@ export const questionSchema = z
     maxWords: z.number().int().min(1).max(2000).optional(),
   })
   .strict();
+const calendarDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a YYYY-MM-DD date.")
+  .refine(
+    (value) => Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value,
+    "Use a real calendar date.",
+  );
+export const recruitmentMilestoneSchema = z
+  .object({
+    id: z.string().regex(/^[a-z0-9-]{1,40}$/i),
+    step: z.enum(RECRUITMENT_STEPS),
+    title: z.string().trim().max(80).optional(),
+    date: calendarDate,
+    endDate: calendarDate.optional(),
+    note: z.string().trim().max(300).optional(),
+  })
+  .strict()
+  .refine((value) => !value.endDate || value.endDate >= value.date, {
+    message: "A milestone cannot end before it starts.",
+    path: ["endDate"],
+  })
+  .refine((value) => value.step !== "Other" || Boolean(value.title), {
+    message: "Name the milestone.",
+    path: ["title"],
+  });
 export const clubSettingsSchema = z
   .object({
     requiresUscId: z.boolean().optional(),
@@ -316,6 +359,14 @@ export const clubSettingsSchema = z
       .refine(
         (value) => new Set(value.map((item) => item.id)).size === value.length,
         "Question IDs must be unique.",
+      )
+      .optional(),
+    recruitmentTimeline: z
+      .array(recruitmentMilestoneSchema)
+      .max(12)
+      .refine(
+        (value) => new Set(value.map((item) => item.id)).size === value.length,
+        "Milestone IDs must be unique.",
       )
       .optional(),
   })
@@ -497,6 +548,9 @@ export function frontendClub(
     zoomConnected: false,
     teamsConnected: false,
     websiteUrl: club.websiteUrl,
+    recruitmentTimeline: [...(config.recruitmentTimeline ?? [])].sort(
+      (a, b) => a.date.localeCompare(b.date) || RECRUITMENT_STEPS.indexOf(a.step) - RECRUITMENT_STEPS.indexOf(b.step),
+    ),
   };
 }
 export function sourceSummary(

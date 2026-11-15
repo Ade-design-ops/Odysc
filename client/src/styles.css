@@ -824,3 +824,33 @@ fieldset.plain { border: 0; margin: 0; padding: 0; min-width: 0; }
 .homeband.has-extra { padding-bottom: 150px; }
 .homeband-skyline { height: 92px; bottom: 58px; }
 @media (max-width: 760px) { .homeband.has-extra { padding-bottom: 120px; } .homeband-skyline { height: 66px; bottom: 56px; } }
+
+/* ---------- recruiting timeline ---------- */
+.workspace-stack { display: grid; gap: 20px; }
+.rt-mode { margin-top: 0; }
+.rt-list { list-style: none; margin: 4px 0 0; padding: 0; position: relative; }
+.rt-item { display: grid; grid-template-columns: 92px 1fr; gap: 18px; position: relative; padding: 0 0 18px; }
+.rt-item:last-child { padding-bottom: 4px; }
+/* The rail: a line through the dots, drawn per item so it ends at the last step. */
+.rt-body { position: relative; padding-left: 24px; min-width: 0; }
+.rt-body::before { content: ""; position: absolute; left: 5px; top: 18px; bottom: -18px; width: 2px; background: var(--line-2); }
+.rt-item:last-child .rt-body::before { display: none; }
+.rt-body::after { content: ""; position: absolute; left: 0; top: 5px; width: 12px; height: 12px; border-radius: 50%; background: var(--paper); border: 2px solid var(--cardinal); }
+.rt-item.past .rt-body::after { background: var(--line-2); border-color: var(--line-2); }
+.rt-item.next .rt-body::after { background: var(--gold); border-color: var(--cardinal); box-shadow: 0 0 0 4px var(--gold-soft); }
+.rt-when { text-align: right; display: flex; flex-direction: column; line-height: 1.25; padding-top: 1px; }
+.rt-day { font-weight: 600; font-variant-numeric: tabular-nums; }
+.rt-weekday { font-size: 12px; color: var(--ink-3); }
+.rt-item.past .rt-when, .rt-item.past .rt-body .row-title, .rt-item.past .rt-note { color: var(--ink-3); }
+.rt-flag { margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--cardinal-dark); background: var(--gold-soft); border-radius: 6px; padding: 1px 7px; vertical-align: 1px; }
+.rt-note { margin: 2px 0 0; color: var(--ink-2); font-size: 14px; }
+.rt-editable { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.rt-actions { gap: 4px; flex-shrink: 0; margin-top: -4px; }
+.rt-body > .rt-form { margin-top: 0; }
+.rt-form { margin-top: 14px; padding: 16px; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--paper-2); }
+.rt-save { gap: 12px; margin-top: 20px; flex-wrap: wrap; align-items: center; }
+@media (max-width: 860px) {
+  .rt-item { grid-template-columns: 64px 1fr; gap: 12px; }
+  .rt-editable { flex-direction: column; gap: 2px; }
+  .rt-actions { margin: 0 0 0 -10px; }
+}
