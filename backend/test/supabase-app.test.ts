@@ -47,6 +47,12 @@ function providerFixture() {
         assert.equal(url.searchParams.get('user_id'), `eq.${user.id}`);
         return json(profiles.has(user.id) ? [profiles.get(user.id)] : []);
       }
+      if (method === 'PATCH') {
+        assert.equal(url.searchParams.get('user_id'), `eq.${user.id}`);
+        const row = profiles.get(user.id);
+        if (row) profiles.set(user.id, { ...row, ...JSON.parse(String(init?.body)) as Json });
+        return new Response(null, { status: 204 });
+      }
       if (method === 'POST') {
         assert.equal(url.searchParams.get('on_conflict'), 'user_id');
         assert.match(requestHeaders.get('prefer') ?? '', /resolution=merge-duplicates/u);
@@ -121,6 +127,8 @@ function uploadBody(pdf: Uint8Array) {
 async function completeBasics(app: Awaited<ReturnType<typeof buildApp>>) {
   const saved = await app.inject({ method: 'PATCH', url: '/api/v1/me/onboarding', headers, payload: { academicYear: 'first_year', major: 'Undeclared', interests: ['Still exploring'] } });
   assert.equal(saved.statusCode, 200, saved.body);
+  const uploaded = await app.inject({ method: 'POST', url: '/api/v1/me/resume', ...uploadBody(pdfFixture({ text: '' })) });
+  assert.equal(uploaded.statusCode, 201, uploaded.body);
   const completed = await app.inject({ method: 'POST', url: '/api/v1/me/onboarding/complete', headers, payload: {} });
   assert.equal(completed.statusCode, 200, completed.body);
   return completed.json();
@@ -156,7 +164,7 @@ test('Supabase login and onboarding write to the user-scoped Data API through th
   assert.equal(initial.json().onboarding.status, 'not_started');
   const completed = await completeBasics(app);
   assert.equal(completed.onboarding.status, 'completed');
-  assert.equal(completed.resume, null);
+  assert.equal(completed.resume.textStatus, 'unavailable');
   assert.equal(provider.profiles.get(studentId)?.academic_year, 'first_year');
   assert.deepEqual(provider.profiles.get(studentId)?.interests, ['Still exploring']);
   const after = await app.inject({ url: '/api/v1/me/profile', headers });
@@ -164,6 +172,8 @@ test('Supabase login and onboarding write to the user-scoped Data API through th
   const other = await app.inject({ url: '/api/v1/me/onboarding', headers: otherHeaders });
   assert.equal(other.json().profile.major, '');
   assert.equal(other.json().onboarding.status, 'not_started');
+  assert.equal(other.json().resume, null);
+  assert.ok(other.json().onboarding.missingRequiredFields.includes('resume'));
   assert.equal(provider.profiles.size, 1);
 });
 
@@ -191,8 +201,8 @@ test('full app supports private cookie sessions and trusted frontend onboarding 
   assert.equal(preflight.headers['access-control-allow-credentials'], 'true');
 });
 
-test('private PDF uploads populate Supabase onboarding metadata and deletion keeps optional onboarding complete', async t => {
-  const { app } = await fixture(t);
+test('private PDF uploads populate Supabase onboarding metadata and deletion invalidates completion without removing profile data', async t => {
+  const { app, provider } = await fixture(t);
   const completed = await completeBasics(app);
   const bytes = pdfFixture({ text: 'Campus volunteering and student projects.' });
   const uploaded = await app.inject({ method: 'POST', url: '/api/v1/me/resume', ...uploadBody(bytes) });
@@ -211,16 +221,26 @@ test('private PDF uploads populate Supabase onboarding metadata and deletion kee
   assert.equal((await app.inject({ method: 'DELETE', url: '/api/v1/me/resume', headers })).statusCode, 204);
   const removed = await app.inject({ url: '/api/v1/me/onboarding', headers });
   assert.equal(removed.json().resume, null);
-  assert.equal(removed.json().onboarding.status, 'completed');
-  assert.equal(removed.json().onboarding.completedAt, completed.onboarding.completedAt);
+  assert.equal(removed.json().onboarding.status, 'in_progress');
+  assert.equal(removed.json().onboarding.completedAt, null);
+  assert.deepEqual(removed.json().onboarding.missingRequiredFields, ['resume']);
+  assert.deepEqual(removed.json().profile, completed.profile);
+  assert.equal(provider.profiles.get(studentId)?.onboarding_completed_at, null);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/v1/me/resume', ...uploadBody(pdfFixture({ text: '' })) })).statusCode, 201);
+  assert.equal((await app.inject({ url: '/api/v1/me/onboarding', headers })).json().onboarding.status, 'in_progress');
 });
 
-test('Supabase matching uses profile goals and optional private résumé text with real directory IDs', async t => {
+test('Supabase matching requires a private PDF and uses available résumé text and profile goals with real directory IDs', async t => {
   const { app, provider } = await fixture(t);
   const initial = await app.inject({ method: 'POST', url: '/api/v1/me/matches', headers });
-  assert.equal(initial.statusCode, 200, initial.body);
-  assert.equal(initial.json().mode, 'local');
-  assert.ok(initial.json().matches.every((match: { score: number }) => match.score === 0));
+  assert.equal(initial.statusCode, 400, initial.body);
+  assert.equal(initial.json().error.code, 'RESUME_REQUIRED');
+  const blankPdf = await app.inject({ method: 'POST', url: '/api/v1/me/resume', ...uploadBody(pdfFixture({ text: '' })) });
+  assert.equal(blankPdf.statusCode, 201, blankPdf.body);
+  const baseline = await app.inject({ method: 'POST', url: '/api/v1/me/matches', headers });
+  assert.equal(baseline.statusCode, 200, baseline.body);
+  assert.equal(baseline.json().mode, 'local');
+  assert.ok(baseline.json().matches.every((match: { score: number }) => match.score === 0));
   const goals = await app.inject({ method: 'PATCH', url: '/api/v1/me/onboarding', headers, payload: { goals: ['robotics'] } });
   assert.equal(goals.statusCode, 200, goals.body);
   const byGoals = await app.inject({ method: 'POST', url: '/api/v1/me/matches', headers });
@@ -237,7 +257,8 @@ test('Supabase matching uses profile goals and optional private résumé text wi
   assert.deepEqual(provider.profiles.get(studentId), before);
   assert.equal((await app.inject({ method: 'DELETE', url: '/api/v1/me/resume', headers })).statusCode, 204);
   const afterDelete = await app.inject({ method: 'POST', url: '/api/v1/me/matches', headers });
-  assert.equal(afterDelete.json().matches.find((match: { clubId: string }) => match.clubId === '2').score, 0);
+  assert.equal(afterDelete.statusCode, 400, afterDelete.body);
+  assert.equal(afterDelete.json().error.code, 'RESUME_REQUIRED');
 });
 
 test('unconnected Supabase application routes return an explicit unavailable error without falling back to SQLite', async t => {
@@ -249,4 +270,18 @@ test('unconnected Supabase application routes return an explicit unavailable err
   assert.equal(provider.calls.length, before, 'unavailable feature must not mutate Supabase profiles');
   assert.equal(provider.profiles.size, 0);
   assert.equal((await app.inject('/health')).json().backend, 'supabase');
+});
+
+test('Supabase onboarding basics and a failed PDF upload remain incomplete', async t => {
+  const { app, provider } = await fixture(t);
+  const draft = await app.inject({ method: 'PATCH', url: '/api/v1/me/onboarding', headers, payload: { academicYear: 'graduate', major: 'Cinema', interests: ['Film'] } });
+  assert.equal(draft.statusCode, 200, draft.body);
+  assert.deepEqual(draft.json().onboarding.missingRequiredFields, ['resume']);
+  const invalid = await app.inject({ method: 'POST', url: '/api/v1/me/resume', ...uploadBody(new Uint8Array(Buffer.from('not a PDF'))) });
+  assert.equal(invalid.statusCode, 400, invalid.body);
+  const complete = await app.inject({ method: 'POST', url: '/api/v1/me/onboarding/complete', headers, payload: {} });
+  assert.equal(complete.statusCode, 400, complete.body);
+  assert.equal(complete.json().error.code, 'MISSING_ONBOARDING_FIELDS');
+  assert.match(complete.json().error.message, /resume/u);
+  assert.equal(provider.profiles.get(studentId)?.onboarding_completed_at, null);
 });

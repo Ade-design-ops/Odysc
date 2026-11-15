@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import Fastify, { type FastifyError } from 'fastify';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { ResumeFiles } from '../src/resume-files.js';
+import { parseResumePdf } from '../src/resume.js';
+import { pdfFixture } from './fixtures/pdf.js';
 import { HttpError } from '../src/errors.js';
 import { registerSupabaseStudent } from '../src/supabase-student.js';
 
@@ -99,17 +106,24 @@ function mockProvider() {
   return { calls, profiles, users, state, fetch, unexpected };
 }
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, withResumeService = true) {
   const provider = mockProvider();
+  const directory = await mkdtemp(join(tmpdir(), 'odysc-native-onboarding-'));
+  const files = new ResumeFiles(directory);
+  const savePdf = async (userId = studentId) => {
+    const bytes = pdfFixture({ text: '' });
+    const parsed = await parseResumePdf(bytes);
+    await files.save({ studentId: userId, bytes, text: parsed.text, info: { id: randomUUID(), fileName: 'resume.pdf', mimeType: 'application/pdf', sizeBytes: bytes.byteLength, pageCount: parsed.pageCount, textStatus: parsed.textStatus, uploadedAt: createdAt } });
+  };
   const app = Fastify({ logger: false, ajv: { customOptions: { removeAdditional: false } } });
   app.setErrorHandler<FastifyError>((error, _request, reply) => {
     if (error.validation) return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: error.message } });
     if (error instanceof HttpError) return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message } });
     return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Something went wrong. Try again.' } });
   });
-  await registerSupabaseStudent(app, { url: projectUrl, publishableKey, fetch: provider.fetch, studentEmailDomain: '' }, { apiKey: '' });
-  t.after(async () => { await app.close(); assert.deepEqual(provider.unexpected, []); });
-  return { app, provider };
+  await registerSupabaseStudent(app, { url: projectUrl, publishableKey, fetch: provider.fetch, studentEmailDomain: '' }, { apiKey: '' }, withResumeService ? { getResumeInfo: async id => await files.getInfo(id) ?? null } : {});
+  t.after(async () => { try { await app.close(); assert.deepEqual(provider.unexpected, []); } finally { await rm(directory, { recursive: true, force: true }); } });
+  return { app, provider, files, savePdf };
 }
 
 const profileWrites = (calls: ProviderCall[]) => calls.filter(call => call.url.pathname === '/rest/v1/student_profiles' && call.method !== 'GET');
@@ -169,7 +183,8 @@ test('signup requiring email confirmation returns no fake session or profile wri
 });
 
 test('onboarding partial writes preserve omitted data, normalize fields, and invalidate completion atomically', async t => {
-  const { app, provider } = await fixture(t);
+  const { app, provider, savePdf } = await fixture(t);
+  await savePdf();
   provider.profiles.set(studentId, profileRow(studentId, { onboarding_completed_at: createdAt }));
   const optional = await app.inject({ method: 'PATCH', url: '/api/v1/me/onboarding', headers, payload: { name: '  New Profile Name  ', skills: [' Python ', 'python', ' '], goals: [' Meet people ', 'meet PEOPLE'] } });
   assert.equal(optional.statusCode, 200, optional.body);
@@ -195,8 +210,8 @@ test('onboarding partial writes preserve omitted data, normalize fields, and inv
   assert.equal(provider.profiles.get(studentId)?.full_name, 'New Profile Name');
 });
 
-test('onboarding completion needs only the basics and profile parsing never saves extracted data', async t => {
-  const { app, provider } = await fixture(t);
+test('onboarding completion requires a private PDF and basics while parsing never saves extracted data', async t => {
+  const { app, provider, savePdf } = await fixture(t);
   const initial = await app.inject({ url: '/api/v1/me/onboarding', headers });
   assert.equal(initial.statusCode, 200, initial.body);
   assert.equal(initial.json().user.name, 'Alex Auth');
@@ -213,11 +228,16 @@ test('onboarding completion needs only the basics and profile parsing never save
   assert.equal(profileWrites(provider.calls).length, 0);
   const draft = await app.inject({ method: 'PATCH', url: '/api/v1/me/onboarding', headers, payload: { academicYear: 'first_year', major: 'Undeclared', interests: ['Still exploring'] } });
   assert.equal(draft.statusCode, 200, draft.body);
+  assert.deepEqual(draft.json().onboarding.missingRequiredFields, ['resume']);
+  const noPdf = await app.inject({ method: 'POST', url: '/api/v1/me/onboarding/complete', headers, payload: {} });
+  assert.equal(noPdf.statusCode, 400, noPdf.body);
+  assert.equal(noPdf.json().error.code, 'MISSING_ONBOARDING_FIELDS');
+  await savePdf();
   const completed = await app.inject({ method: 'POST', url: '/api/v1/me/onboarding/complete', headers, payload: {} });
   assert.equal(completed.statusCode, 200, completed.body);
   assert.equal(completed.json().onboarding.status, 'completed');
   assert.deepEqual(completed.json().onboarding.missingRequiredFields, []);
-  assert.equal(completed.json().resume, null);
+  assert.equal(completed.json().resume.textStatus, 'unavailable');
   assert.deepEqual(completed.json().profile.skills, []);
   assert.deepEqual(completed.json().profile.goals, []);
 });
@@ -319,4 +339,22 @@ test('invalid login, provider failures, and logout use fixed safe errors without
   provider.state.authFailure = true;
   const revoked = await app.inject({ url: '/api/v1/auth/me', headers });
   assert.equal(revoked.statusCode, 401, revoked.body);
+});
+
+test('missing resume services or another student PDF cannot satisfy the current student file requirement', async t => {
+  for (const withResumeService of [false, true]) {
+    const { app, provider, savePdf } = await fixture(t, withResumeService);
+    provider.profiles.set(studentId, profileRow(studentId, { onboarding_completed_at: createdAt }));
+    await savePdf(otherStudentId);
+    const snapshot = await app.inject({ url: '/api/v1/me/onboarding', headers });
+    assert.equal(snapshot.statusCode, 200, snapshot.body);
+    assert.equal(snapshot.json().resume, null);
+    assert.equal(snapshot.json().onboarding.status, 'in_progress');
+    assert.equal(snapshot.json().onboarding.completedAt, null);
+    assert.deepEqual(snapshot.json().onboarding.missingRequiredFields, ['resume']);
+    assert.equal(snapshot.json().onboarding.recommendedFields.includes('resume'), false);
+    const complete = await app.inject({ method: 'POST', url: '/api/v1/me/onboarding/complete', headers, payload: {} });
+    assert.equal(complete.statusCode, 400, complete.body);
+    assert.equal(profileWrites(provider.calls).length, 0);
+  }
 });

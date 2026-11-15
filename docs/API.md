@@ -11,7 +11,7 @@ The frontend now calls the real shared workflow service. Its [browser contract](
 | Account/session | `/api/session`, `/api/auth/register`, `/api/auth/login`, `/api/auth/logout` |
 | Profile | `/api/me`, `/api/me/complete`; partial saves accept frontend profile fields and optional extras |
 | Personal workspace | `/api/workspace`; server-backed club list, drafts, calendar and in-app reminder preferences |
-| Directory/AI | `/api/clubs`, `/api/events`, `/api/ai/match`, multipart `/api/ai/parse-resume`, `/api/ai/summarize` |
+| Directory/AI | `/api/clubs`, `/api/events`, `/api/ai/match`, multipart `/api/ai/parse-resume`, `/api/ai/summarize`, `/api/club-finder` |
 | Applications | `/api/applications`, `/api/applications/mine`, `/api/clubs/:clubId/applicants` |
 | Officers/reviews | `/api/organizer/state`, `/api/organizer/request`, club team/settings routes and application review/decision routes |
 | Interviews | `/api/interviews`, `/api/interviews/:id/book` |
@@ -42,14 +42,14 @@ The following table documents the original native contract, not the connected br
 | `GET /events` | Public | `{events:[],notice:string}`; native placeholder, separate from shared `/api/events` |
 | `GET /me/onboarding` | Student | `{user,profile,resume,onboarding,fields}` |
 | `PATCH /me/onboarding` | Student | Partial `{name,academicYear,major,interests,goals,bio,skills}` → same envelope; at least one field |
-| `POST /me/onboarding/complete` | Student | `{}` → same envelope; only required basics gate completion |
+| `POST /me/onboarding/complete` | Student | `{}` → same envelope; required basics and saved own PDF gate completion |
 | `POST /me/resume` | Student | Multipart file `resume` → `201 {resume:ResumeInfo,notice:string}`; PDF, 5 MiB, 10 pages |
 | `GET /me/resume` | Student | Own private PDF, not JSON |
 | `DELETE /me/resume` | Student | `204`, no response body |
 | `GET /me/profile` | Student | `{user:User,profile:Profile}` |
 | `PUT /me/profile` | Student | Original profile fields + optional `academicYear`/`goals` → `{profile:Profile}` |
 | `POST /me/profile/parse` | Student | `{text:string}` → `ParseResult`; does not save |
-| `POST /me/matches` | Student | No body needed → `MatchResult`; saved profile, shared clubs, optional resume text |
+| `POST /me/matches` | Student | No body needed → `MatchResult`; requires saved own PDF (`400 RESUME_REQUIRED` when absent); extracted text may be unavailable |
 
 The frontend includes signup, sign-in, check-email, and recovery screens. Browser account/session calls use the `/api` routes above; native Auth routes remain available to API clients. New signup and reset passwords must be 10–128 characters. Sign-in accepts an existing nonempty password and lets Supabase verify it, so previously created accounts remain compatible. Keep global email confirmation enabled. A registration result with `accessToken:null`, `expiresAt:null`, and `requiresEmailConfirmation:true` must show the check-email state before protected requests. The backend callback at `/auth/callback` exchanges a one-time code using the original browser's PKCE verifier. Default `hash` routing redirects to `/#/profile`, `/#/reset-password`, or `/#/auth/error`; explicit `history` routing preserves `/student`, `/reset-password`, and `/auth/error`. Open the email link in the same browser that requested it. See [authentication setup](AUTHENTICATION.md). Native `/api/v1/auth/register` still rejects organizer registration with `503 FEATURE_NOT_CONNECTED`; browser officer signup uses `/api/auth/register` and approved membership context instead.
 
@@ -111,7 +111,7 @@ Save an onboarding draft with `PATCH /me/onboarding`:
 {"name":"Jordan Lee","academicYear":"second_year","major":"Undeclared","interests":["Still exploring"]}
 ```
 
-The response contains the saved `user` and `profile`, optional resume metadata, current onboarding state, and field definitions. After valid basics are saved, `missingRequiredFields` is empty; status remains in progress until `POST /me/onboarding/complete` with `{}`. Completion sets `status:'completed'` and a `completedAt` timestamp. No resume, goals, bio, or skills are required.
+The response contains the saved `user` and `profile`, optional resume metadata, current onboarding state, and field definitions. After valid basics are saved and a PDF is uploaded, `missingRequiredFields` is empty; status remains in progress until `POST /me/onboarding/complete` with `{}`. Completion sets `status:'completed'` and a `completedAt` timestamp. The résumé PDF is required; goals, bio, and skills remain optional. Deleting the PDF makes onboarding incomplete.
 
 `POST /me/profile/parse` accepts:
 
@@ -140,6 +140,8 @@ Errors use one envelope; an unavailable shared feature returns HTTP 503:
 Handle `400` validation, `401` sign-in, `403` permission, `404` missing/private records, `409` lifecycle conflicts, `413` oversized uploads, `422` unreadable/password-protected/over-page-limit PDFs, `429` rate limiting, and `503` unavailable shared features. Read `result.error?.message`. Do not parse JSON after `204` responses or PDF downloads. Supabase failures must remain visible rather than silently switching persistence modes.
 
 ## AI engineer boundary
+
+The connected [Claude club-finder chat](CLUB_FINDER.md) uses a separate `ANTHROPIC_API_KEY`. Its strict browser request contains history and an optional current-PDF hint; the server supplies the authenticated student's saved PDF/profile/catalog. It returns qualitative fit labels and does not change the existing numeric-match contract. It runs only on an explicit student action.
 
 The backend owns authentication, permitted data access, persistence, and HTTP responses. The AI engineer owns parsing, ranking, and answer selection. The shared browser routes connect PDF parsing, matching, and source-grounded applicant summaries. Exact submitted responses are persisted to the shared answer bank only with explicit consent; native saved-answer selection endpoints remain placeholders. Matching may use heuristic fallback, and summaries do not make admission decisions.
 

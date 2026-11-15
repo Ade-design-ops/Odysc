@@ -3,6 +3,7 @@ import test, { type TestContext } from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { Store } from '../src/db.js';
+import { pdfFixture } from './fixtures/pdf.js';
 
 const onboardingUrl = '/api/v1/me/onboarding';
 
@@ -23,12 +24,22 @@ async function fixture(t: TestContext) {
   return { store, app, ...student };
 }
 
+async function uploadPdf(app: FastifyInstance, headers: { authorization: string }, bytes = pdfFixture({ text: '' })) {
+  const boundary = 'onboarding-required-pdf';
+  return app.inject({ method: 'POST', url: '/api/v1/me/resume', headers: { ...headers, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="resume"; filename="resume.pdf"\r\nContent-Type: application/pdf\r\n\r\n`),
+    Buffer.from(bytes), Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]) });
+}
+
 async function makeComplete(app: FastifyInstance, headers: { authorization: string }) {
   const draft = await app.inject({
     method: 'PATCH', url: onboardingUrl, headers,
     payload: { major: 'Computer Science', academicYear: 'second_year', interests: ['Robotics'] },
   });
   assert.equal(draft.statusCode, 200, draft.body);
+  const uploaded = await uploadPdf(app, headers);
+  assert.equal(uploaded.statusCode, 201, uploaded.body);
   const complete = await app.inject({ method: 'POST', url: `${onboardingUrl}/complete`, headers, payload: {} });
   assert.equal(complete.statusCode, 200, complete.body);
   return complete.json();
@@ -48,11 +59,12 @@ test('new student onboarding exposes defaults, field guidance, and required prog
   assert.equal(snapshot.resume, null);
   assert.equal(snapshot.onboarding.status, 'not_started');
   assert.equal(snapshot.onboarding.completedAt, null);
-  for (const required of ['major', 'academicYear', 'interests']) assert.ok(snapshot.onboarding.missingRequiredFields.includes(required));
-  for (const optional of ['resume', 'goals', 'bio', 'skills']) assert.equal(snapshot.onboarding.missingRequiredFields.includes(optional), false);
+  for (const required of ['major', 'academicYear', 'interests', 'resume']) assert.ok(snapshot.onboarding.missingRequiredFields.includes(required));
+  for (const optional of ['goals', 'bio', 'skills']) assert.equal(snapshot.onboarding.missingRequiredFields.includes(optional), false);
   assert.ok(Array.isArray(snapshot.onboarding.recommendedFields));
   assert.ok(Array.isArray(snapshot.fields));
-  assert.equal(snapshot.fields.find((field: { key: string }) => field.key === 'resume').required, false);
+  assert.equal(snapshot.fields.find((field: { key: string }) => field.key === 'resume').required, true);
+  assert.equal(snapshot.onboarding.recommendedFields.includes('resume'), false);
 });
 
 test('partial onboarding drafts trim strings, deduplicate tags, and preserve omitted details', async t => {
@@ -107,13 +119,13 @@ test('completion rejects incomplete required fields and never marks the draft co
   assert.ok(after.json().onboarding.missingRequiredFields.includes('interests'));
 });
 
-test('required profile fields alone complete onboarding while resume and extra details remain optional', async t => {
+test('required profile fields and a valid PDF complete onboarding without parsed text or optional details', async t => {
   const { app, headers } = await fixture(t);
   const completed = await makeComplete(app, headers);
   assert.equal(completed.onboarding.status, 'completed');
   assert.ok(Number.isFinite(Date.parse(completed.onboarding.completedAt)));
   assert.deepEqual(completed.onboarding.missingRequiredFields, []);
-  assert.equal(completed.resume, null);
+  assert.equal(completed.resume.textStatus, 'unavailable');
   assert.deepEqual(completed.profile.goals, []);
   assert.deepEqual(completed.profile.skills, []);
   assert.equal(completed.profile.bio, '');
@@ -224,4 +236,29 @@ test('legacy profile data and PUT requests receive new defaults, and clearing in
   assert.equal(after.json().onboarding.completedAt, null);
   const unknown = await app.inject({ method: 'PUT', url: '/api/v1/me/profile', headers, payload: { ...legacy, applicationStatus: 'accepted' } });
   assert.equal(unknown.statusCode, 400, unknown.body);
+});
+
+test('basics and a failed upload cannot complete onboarding; deleting a valid PDF clears only completion', async t => {
+  const { app, headers, store, user } = await fixture(t);
+  const draft = await app.inject({ method: 'PATCH', url: onboardingUrl, headers, payload: { major: 'Cinema', academicYear: 'graduate', interests: ['Film'] } });
+  assert.equal(draft.statusCode, 200, draft.body);
+  assert.deepEqual(draft.json().onboarding.missingRequiredFields, ['resume']);
+  const failed = await uploadPdf(app, headers, new Uint8Array(Buffer.from('not a PDF')));
+  assert.equal(failed.statusCode, 400, failed.body);
+  const blocked = await app.inject({ method: 'POST', url: `${onboardingUrl}/complete`, headers, payload: {} });
+  assert.equal(blocked.statusCode, 400, blocked.body);
+  assert.equal(blocked.json().error.code, 'MISSING_ONBOARDING_FIELDS');
+  assert.match(blocked.json().error.message, /resume/u);
+  const completed = await makeComplete(app, headers);
+  const profile = completed.profile;
+  assert.equal((await app.inject({ method: 'DELETE', url: '/api/v1/me/resume', headers })).statusCode, 204);
+  const removed = await app.inject({ url: onboardingUrl, headers });
+  assert.equal(removed.json().onboarding.status, 'in_progress');
+  assert.equal(removed.json().onboarding.completedAt, null);
+  assert.deepEqual(removed.json().onboarding.missingRequiredFields, ['resume']);
+  assert.deepEqual(removed.json().profile, profile);
+  assert.equal(store.getOnboarding(user.id).completedAt, null);
+  assert.equal((await uploadPdf(app, headers)).statusCode, 201);
+  const reuploaded = await app.inject({ url: onboardingUrl, headers });
+  assert.equal(reuploaded.json().onboarding.status, 'in_progress', 'a new PDF does not restore an old completion timestamp');
 });

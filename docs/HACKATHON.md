@@ -22,7 +22,7 @@ Keep `student_mock` as AI test data. Live identities use Supabase Auth, student 
 ## Rehearse the connected story
 
 1. Sign in with a confirmed USC student account and show that a non-USC address is rejected.
-2. Save name, year, major, and an interest. Resume, skills, experience, goals, bio, and USC ID are optional; no university enrollment check is claimed.
+2. Save name, year, major, an interest, and upload a valid résumé PDF. Skills, experience details, goals, bio, and USC ID remain optional; no university enrollment check is claimed.
 3. Optionally upload an authorized PDF and review suggested fields before applying them. Reload the profile to show shared persistence.
 4. Browse real directory clubs, show unavailable facts honestly, and request matches. Matching may use heuristic fallback; do not call relevance an admission probability.
 5. Add a club, save a draft, and submit a reviewed application. Show explicit consent for answer memory and any justified USC ID sharing. A zero-question submission is an Odysc interest record, not an official external club application.

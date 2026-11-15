@@ -45,14 +45,14 @@ async function snapshot(user: User, row: StoredStudentProfile | null, services: 
   const currentUser = row ? { ...user, name: row.full_name } : user;
   const profile = toApiProfile(row);
   const resume = await services.getResumeInfo?.(currentUser.id) ?? null;
-  const missingRequiredFields = missingBasics(currentUser, profile);
+  const missingRequiredFields = [...missingBasics(currentUser, profile), ...(!resume ? ['resume'] : [])];
   const completedAt = missingRequiredFields.length ? null : row?.onboarding_completed_at ?? null;
   return {
     user: currentUser, profile, resume,
     onboarding: {
       status: completedAt ? 'completed' : row || resume ? 'in_progress' : 'not_started', completedAt,
       missingRequiredFields,
-      recommendedFields: [...(!resume ? ['resume'] : []), ...(!profile.goals.length ? ['goals'] : []), ...(!profile.bio ? ['bio'] : []), ...(!profile.skills.length ? ['skills'] : [])],
+      recommendedFields: [...(!profile.goals.length ? ['goals'] : []), ...(!profile.bio ? ['bio'] : []), ...(!profile.skills.length ? ['skills'] : [])],
     },
     fields: onboardingFields,
   };
@@ -145,12 +145,13 @@ export async function registerSupabaseStudent(app: FastifyInstance, options: Sup
     return snapshot(updatedUser, saved, services);
   });
   app.post('/api/v1/me/onboarding/complete', {
-    schema: { ...secured, summary: 'Complete onboarding using only required basics', body: Type.Object({}, { additionalProperties: false }) },
+    schema: { ...secured, summary: 'Complete onboarding with the required profile fields and PDF résumé', body: Type.Object({}, { additionalProperties: false }) },
   }, async request => {
     const { user, row, token } = await current(request);
     const profile = toApiProfile(row);
-    const missing = missingBasics(user, profile);
-    if (missing.length) throw new HttpError(400, `Complete these basics first: ${missing.join(', ')}. Optional details can be added later.`, 'MISSING_ONBOARDING_FIELDS');
+    const resume = await services.getResumeInfo?.(user.id) ?? null;
+    const missing = [...missingBasics(user, profile), ...(!resume ? ['resume'] : [])];
+    if (missing.length) throw new HttpError(400, `Complete these required fields first: ${missing.join(', ')}. Optional details can be added later.`, 'MISSING_ONBOARDING_FIELDS');
     const saved = await gateway.saveProfile(token, profileRow(user, profile, row, row?.onboarding_completed_at ?? new Date().toISOString()));
     return snapshot(user, saved, services);
   });

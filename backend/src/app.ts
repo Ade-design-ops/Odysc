@@ -6,6 +6,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import multipart from '@fastify/multipart';
 import { randomBytes } from 'node:crypto';
 import type { AiOptions } from './ai.js';
+import type { ClubFinderOptions } from './club-finder.js';
 import type { Store } from './db.js';
 import { HttpError } from './errors.js';
 import type { SupabaseOptions } from './supabase.js';
@@ -23,6 +24,7 @@ export interface AppOptions {
   logger?: FastifyServerOptions['logger'];
   rateLimit?: boolean;
   ai?: AiOptions;
+  clubFinder?: ClubFinderOptions;
   corsOrigins?: string[];
   webAuth?: WebAuthOptions;
   frontend?: false | { dbUrl?: string; caFile?: string; store?: FrontendStore };
@@ -101,7 +103,7 @@ export async function buildApp(options: AppOptions = {}) {
     if (options.frontend !== false) {
       const { registerFrontendBackend } = await import('./frontend-backend.js');
       await registerFrontendBackend(app, {
-        gateway: new SupabaseGateway(configuration), webAuth, catalog, resumeFiles: files, ai: options.ai,
+        gateway: new SupabaseGateway(configuration), webAuth, catalog, resumeFiles: files, ai: options.ai, clubFinder: options.clubFinder,
         dbUrl: options.frontend?.dbUrl ?? process.env.SUPABASE_DB_URL ?? '',
         caFile: options.frontend?.caFile ?? process.env.SUPABASE_DB_CA_FILE ?? '',
         ...(options.frontend?.store ? { store: options.frontend.store } : {}),

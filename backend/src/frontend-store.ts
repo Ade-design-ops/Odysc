@@ -8,8 +8,10 @@ import {
   emptyWorkspace,
   frontendStudent,
   iso,
+  readClubSettings,
   sourceSummary,
   teamMember,
+  validated,
   yearNames,
   type Actor,
   type ApplicationRow,
@@ -425,9 +427,8 @@ export class FrontendStore {
         [membership.club_id],
       )
     ).rows.map(teamMember);
-    base.clubSettings[membership.club_id] = await this.settings(
-      q,
-      membership.club_id,
+    base.clubSettings[membership.club_id] = readClubSettings(
+      await this.settings(q, membership.club_id),
     );
     const reviews = await q.query<{
       application_id: string;
@@ -710,7 +711,7 @@ export class FrontendStore {
   ) {
     return this.actor(actor, async (q) => {
       await this.lockClub(q, input.clubId);
-      const config = clubSettingsSchema.parse(
+      const config = readClubSettings(
         await this.settings(q, input.clubId),
       );
       const now = this.now();
@@ -1041,10 +1042,9 @@ export class FrontendStore {
     return this.actor(actor, async (q) => {
       await this.lockClub(q, clubId);
       await this.member(q, actor, clubId, true);
-      const next = clubSettingsSchema.parse({
-        ...(await this.settings(q, clubId)),
-        ...patch,
-      });
+      const changes = validated(clubSettingsSchema, patch);
+      const stored = await this.settings(q, clubId);
+      const next = readClubSettings({ ...stored, ...changes });
       if (next.requiresUscId && (next.uscIdReason?.trim().length ?? 0) < 15)
         throw new HttpError(
           400,
@@ -1058,8 +1058,8 @@ export class FrontendStore {
           "MEETING_PROVIDER_NOT_CONFIGURED",
         );
       await q.query(
-        "INSERT INTO public.odysc_club_settings(club_id,data,updated_by) VALUES($1::bigint,$2::jsonb,$3::uuid) ON CONFLICT(club_id) DO UPDATE SET data=EXCLUDED.data,updated_by=EXCLUDED.updated_by,updated_at=now()",
-        [clubId, JSON.stringify(next), actor.user.id],
+        "INSERT INTO public.odysc_club_settings(club_id,data,updated_by) VALUES($1::bigint,$2::jsonb,$3::uuid) ON CONFLICT(club_id) DO UPDATE SET data=public.odysc_club_settings.data || $4::jsonb,updated_by=EXCLUDED.updated_by,updated_at=now()",
+        [clubId, JSON.stringify(next), actor.user.id, JSON.stringify(changes)],
       );
       return this.organization(
         q,

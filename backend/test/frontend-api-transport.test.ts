@@ -32,7 +32,8 @@ test('frontend auth uses shared cookie endpoints and preserves existing password
 });
 
 test('PDF transport sends actual bytes as multipart data without a manually set boundary', async t => {
-  const calls = fixture(t, () => Response.json({ needsReview: true, skills: ['TypeScript'] }));
+  const resume = { id: 'saved-pdf-id', fileName: 'resume.pdf', sizeBytes: 19, pageCount: 1, textStatus: 'available', uploadedAt: '2026-11-15T17:00:00Z' };
+  const calls = fixture(t, () => Response.json({ needsReview: true, skills: ['TypeScript'], resume }, { status: 201 }));
   const file = new File(['%PDF-unit-test-only'], 'resume.pdf', { type: 'application/pdf' });
   const result = await api.parseResume(file);
   const sent = calls[0]!;
@@ -45,6 +46,34 @@ test('PDF transport sends actual bytes as multipart data without a manually set 
   assert.equal(uploaded.name, 'resume.pdf');
   assert.equal(await uploaded.text(), '%PDF-unit-test-only');
   assert.equal(result.needsReview, true, 'parsed suggestions require explicit review');
+  assert.deepEqual(result.resume, resume, 'completion uses persisted PDF metadata returned after upload');
+});
+
+test('own résumé status is a private cookie request and preserves authoritative absent/present metadata', async t => {
+  const actor = '11111111-1111-4111-8111-111111111111';
+  const resume = { id: 'saved-pdf-id', fileName: 'resume.pdf', sizeBytes: 1200, pageCount: 1, textStatus: 'unavailable', uploadedAt: '2026-11-15T17:00:00Z' };
+  let present = true;
+  const calls = fixture(t, request => Response.json(request.url === '/api/session'
+    ? { account: { role: 'student', email: 'student@usc.edu', name: 'Test Student' }, profile: { id: actor }, resume, workspace: {}, organization: null }
+    : { resume: present ? resume : null }));
+  setApiActor(actor);
+  assert.deepEqual((await api.session()).resume, resume);
+  assert.equal(new Headers(calls[0]!.options.headers).has('x-odysc-actor'), false, 'bootstrap does not assume the previous actor');
+  assert.deepEqual((await api.resumeStatus()).resume, resume);
+  assert.equal(calls[1]!.url, '/api/me/resume/status');
+  assert.equal(calls[1]!.options.method, 'GET');
+  assert.equal(new Headers(calls[1]!.options.headers).get('x-odysc-actor'), actor);
+  assert.equal(calls[1]!.options.body, undefined, 'the authenticated server chooses whose PDF is inspected');
+  present = false;
+  assert.equal((await api.resumeStatus()).resume, null, 'deleted or absent PDFs are not inferred from a filename or prior upload');
+});
+
+test('completion without a persisted PDF remains a visible server error', async t => {
+  const calls = fixture(t, () => Response.json({ error: { code: 'RESUME_REQUIRED', message: 'Upload your résumé PDF before completing onboarding.' } }, { status: 400 }));
+  setApiActor('11111111-1111-4111-8111-111111111111');
+  await assert.rejects(api.completeProfile(), error => error instanceof ApiError && error.status === 400 && error.code === 'RESUME_REQUIRED');
+  assert.equal(calls[0]!.url, '/api/me/complete');
+  assert.deepEqual(body(calls[0]!), {}, 'the client cannot claim a résumé by sending profile fields');
 });
 
 test('native email recovery endpoints keep their API version and confirmation status', async t => {
@@ -205,4 +234,48 @@ test('an account change during private JSON parsing discards the old payload', a
   });
   setApiActor(first);
   await assert.rejects(api.me(), error => error instanceof ApiError && error.code === 'SESSION_CHANGED' && error.actorId === first);
+});
+
+test('club finder sends cookie-authenticated history and a PDF revision hint without copying private profile or document data', async t => {
+  const reply = { reply: 'Try this club.', matches: [{ clubId: '1', name: 'USC Robotics Club', reason: 'Robotics projects fit your interests.', fit: 'strong' }] };
+  const calls = fixture(t, () => Response.json(reply));
+  const actor = '11111111-1111-4111-8111-111111111111';
+  const resumeId = '77777777-7777-4777-8777-777777777777';
+  setApiActor(actor);
+  assert.deepEqual(await api.clubFinder(), reply);
+  assert.equal(calls[0]!.url, '/api/club-finder');
+  assert.equal(calls[0]!.options.method, 'POST');
+  assert.deepEqual(body(calls[0]!), {});
+  assert.equal(new Headers(calls[0]!.options.headers).get('x-odysc-actor'), actor);
+  await api.clubFinder({ history: [
+    { role: 'assistant', content: 'What would you like to try?' },
+    { role: 'user', content: 'Robotics projects.' },
+  ], resumeId });
+  assert.deepEqual(body(calls[1]!), { history: [
+    { role: 'assistant', content: 'What would you like to try?' },
+    { role: 'user', content: 'Robotics projects.' },
+  ], resumeId });
+  assert.equal(new Headers(calls[1]!.options.headers).get('content-type'), 'application/json');
+  assert.equal(new Headers(calls[1]!.options.headers).get('x-odysc-actor'), actor);
+  for (const forbidden of ['profile', 'resume', 'summary', 'studentId', 'clubs']) assert.equal(forbidden in body(calls[1]!), false);
+});
+
+test('club finder service and stale-PDF failures stay visible instead of becoming fabricated matches', async t => {
+  let status = 503;
+  fixture(t, () => Response.json({ error: { code: status === 503 ? 'AI_NOT_CONFIGURED' : 'RESUME_CHANGED', message: 'Club finder is unavailable.' } }, { status }));
+  setApiActor('11111111-1111-4111-8111-111111111111');
+  await assert.rejects(api.clubFinder(), error => error instanceof ApiError && error.status === 503);
+  status = 409;
+  await assert.rejects(api.clubFinder(), error => error instanceof ApiError && error.status === 409 && error.code === 'RESUME_CHANGED');
+});
+
+test('a late club finder response cannot populate another account conversation', async t => {
+  let release!: (response: Response) => void;
+  fixture(t, () => new Promise<Response>(resolve => { release = resolve; }));
+  const first = '11111111-1111-4111-8111-111111111111';
+  setApiActor(first);
+  const pending = api.clubFinder();
+  setApiActor('22222222-2222-4222-8222-222222222222');
+  release(Response.json({ reply: 'Private previous-account reply.', matches: [] }));
+  await assert.rejects(pending, error => error instanceof ApiError && error.code === 'SESSION_CHANGED' && error.actorId === first);
 });

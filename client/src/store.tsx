@@ -2,7 +2,7 @@
 // Editable drafts stay responsive while writes are serialized to the shared workspace.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Account, AppStatus, Club, ClubEvent, Interview, Match, PersonalEvent, Student } from "../../shared/types";
-import { api, ApiError, setApiActor, type ClubApplicationState, type ClubSettings, type Decision, type OfficerSignupInfo, type OrganizationState, type RegistrationResult, type SessionState, type StudentSignupInfo, type WorkspacePatch, type WorkspaceState } from "./api";
+import { api, ApiError, setApiActor, type ClubApplicationState, type ClubSettings, type Decision, type OfficerSignupInfo, type OrganizationState, type RegistrationResult, type ResumeInfo, type SessionState, type StudentSignupInfo, type WorkspacePatch, type WorkspaceState } from "./api";
 
 export type { ClubSettings, Decision } from "./api";
 export type Draft = Record<string, string>;
@@ -10,10 +10,10 @@ export type ClubApp = ClubApplicationState;
 export const VERIFY_OFFICERS = true;
 
 export const PROFILE_SECTIONS = [
-  { id: "personal", title: "Personal", done: (s: Student) => !!s.name.trim() && !!s.email },
-  { id: "academics", title: "Academics", done: (s: Student) => !!s.major.trim() && s.year > 0 },
-  { id: "experience", title: "Experience", done: (_s: Student) => true },
-  { id: "interests", title: "Skills & interests", done: (s: Student) => s.interests.some((interest) => interest.trim()) },
+  { id: "personal", title: "Personal", done: (s: Student, _resume?: ResumeInfo | null) => !!s.name.trim() && !!s.email },
+  { id: "academics", title: "Academics", done: (s: Student, _resume?: ResumeInfo | null) => !!s.major.trim() && s.year > 0 },
+  { id: "experience", title: "Résumé & experience", done: (_s: Student, resume?: ResumeInfo | null) => !!resume },
+  { id: "interests", title: "Skills & interests", done: (s: Student, _resume?: ResumeInfo | null) => s.interests.some((interest) => interest.trim()) },
 ] as const;
 
 const emptyProfile = (): Student => ({ id: "", name: "", email: "", major: "", year: 0, skills: [], interests: [], experiences: [], bio: "", goals: [] });
@@ -62,7 +62,8 @@ export interface AppState extends DataState {
   events: ClubEvent[];
   createClubEvent: (input: Omit<ClubEvent, "id" | "clubId">) => Promise<void>;
   updateClubEvent: (eventId: string, patch: Partial<Omit<ClubEvent, "id" | "clubId">>) => Promise<void>;
-  resumeUploaded: () => void;
+  resume: ResumeInfo | null;
+  resumeUploaded: (info: ResumeInfo) => void;
   matches: Match[];
   profileDone: boolean;
   profileProgress: number;
@@ -119,6 +120,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [clubs, setClubs] = useState<Club[]>([]);
   const [events, setEvents] = useState<ClubEvent[]>([]);
   const eventsRevision = useRef(0);
+  const [resume, setResume] = useState<ResumeInfo | null>(null);
+  const resumeRef = useRef<ResumeInfo | null>(null);
+  const resumeRevision = useRef(0);
   const [allMatches, setAllMatches] = useState<Match[]>([]);
   const profileTimer = useRef<ReturnType<typeof setTimeout>>();
   const draftTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -145,6 +149,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setP(state);
   }, []);
   const sameActor = useCallback((epoch: number, actor: string) => aliveRef.current && epoch === epochRef.current && actor === actorKey(pRef.current), []);
+  const publishResume = useCallback((info: ResumeInfo | null | undefined) => {
+    const next = info ? { ...info } : null;
+    if (JSON.stringify(next) !== JSON.stringify(resumeRef.current)) {
+      matchEvidenceRevision.current += 1;
+      lastMatchInput.current = "";
+      lastMatchAt.current = 0;
+      setAllMatches([]);
+    }
+    resumeRef.current = next;
+    setResume(next);
+  }, []);
   const publishWorkspace = useCallback((value: WorkspaceState) => {
     if (value.version < workspaceRef.current.version) return;
     workspaceRef.current = normalizeWorkspace(value);
@@ -181,18 +196,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const previousActor = actorKey(pRef.current);
     const incomingActor = account ? incomingProfile.id || account.email : "";
     if (previousActor !== incomingActor) {
+      resumeRevision.current += 1;
       clearPending();
       setAllMatches([]);
       setSaveStatus("idle");
       setProfileSaveError(null);
     }
+    publishResume(account ? session.resume : null);
     const incomingWorkspace = normalizeWorkspace(session.workspace);
     if (previousActor !== incomingActor || incomingWorkspace.version >= workspaceRef.current.version) workspaceRef.current = incomingWorkspace;
     organizationRef.current = normalizeOrganization(session.organization);
     const profile = previousActor === incomingActor && profileDirty.current ? pRef.current.profile : incomingProfile;
     const visibleWorkspace = { ...workspaceRef.current, drafts: { ...workspaceRef.current.drafts, ...inFlightDrafts.current, ...pendingDrafts.current } };
     commit(mergeData(account, profile, visibleWorkspace, organizationRef.current));
-  }, [clearPending, commit]);
+  }, [clearPending, commit, publishResume]);
 
   const notifyFailure = useCallback((error: unknown) => {
     if (!aliveRef.current) return;
@@ -200,7 +217,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (error instanceof ApiError && error.code === "SESSION_CHANGED" && error.actorId) {
       epochRef.current += 1;
       clearPending();
-      applySession({ account: null, profile: null, workspace: emptyWorkspace(), organization: null });
+      applySession({ account: null, profile: null, workspace: emptyWorkspace(), organization: null, resume: null });
       setAllMatches([]);
       setLoadError(null);
     }
@@ -216,7 +233,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const loadMatches = useCallback(async (epoch: number) => {
     if (!aliveRef.current || epoch !== epochRef.current) return;
     const actor = actorKey(pRef.current);
-    if (!actor || pRef.current.account?.role !== "student" || !completeBasics(pRef.current.profile)) {
+    if (!actor || pRef.current.account?.role !== "student" || !completeBasics(pRef.current.profile) || !resumeRef.current) {
       if (aliveRef.current && epoch === epochRef.current) setAllMatches([]);
       return;
     }
@@ -249,6 +266,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const startedProfileRevision = profileRevision.current;
     const startedOrganizationRevision = organizationRevision.current;
     const startedEventsRevision = eventsRevision.current;
+    const startedResumeRevision = resumeRevision.current;
     const work: [Promise<SessionState>, Promise<Club[]>, Promise<ClubEvent[]>] = [
       api.session(), includeDirectory ? api.clubs() : Promise.resolve(clubs), includeDirectory ? api.events() : Promise.resolve(events),
     ];
@@ -263,13 +281,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ...incoming,
         profile: same && startedProfileRevision !== profileRevision.current ? pRef.current.profile : incoming.profile,
         organization: same && startedOrganizationRevision !== organizationRevision.current ? organizationRef.current : incoming.organization,
+        resume: same && startedResumeRevision !== resumeRevision.current ? resumeRef.current : incoming.resume ?? null,
       });
     }
     else {
       if (sessionResult.reason instanceof ApiError && [401, 403].includes(sessionResult.reason.status)) {
         epochRef.current += 1;
         clearPending();
-        applySession({ account: null, profile: null, workspace: emptyWorkspace(), organization: null });
+        applySession({ account: null, profile: null, workspace: emptyWorkspace(), organization: null, resume: null });
         setAllMatches([]);
       }
       failures.push(errorMessage(sessionResult.reason));
@@ -440,7 +459,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return { ...result, session, account: session.account };
     }
     if (!result.requiresEmailConfirmation) throw new ApiError("The new account could not be signed in. Please sign in to continue.", 401, "UNAUTHORIZED");
-    applySession({ account: null, profile: null, workspace: emptyWorkspace(), organization: null });
+    applySession({ account: null, profile: null, workspace: emptyWorkspace(), organization: null, resume: null });
     return result;
   }, [applySession, clearPending]);
 
@@ -452,7 +471,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     catch (error) { if (!(error instanceof ApiError) || ![401, 403].includes(error.status)) { notifyFailure(error); throw error; } }
     epochRef.current += 1;
     clearPending();
-    applySession({ account: null, profile: null, workspace: emptyWorkspace(), organization: null });
+    applySession({ account: null, profile: null, workspace: emptyWorkspace(), organization: null, resume: null });
     setMutationError(null);
     setAllMatches([]);
   }, [applySession, clearPending, flushDrafts, flushProfile, notifyFailure]);
@@ -552,25 +571,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return observed(task);
   }, [events, observed, requireEventAdmin, sameActor]);
 
-  const profileDone = completeBasics(p.profile);
-  const requiredProgress = [!!p.profile.name.trim() && !!p.profile.email, !!p.profile.major.trim(), p.profile.year > 0, p.profile.interests.some((interest) => interest.trim())].filter(Boolean).length / 4;
+  const profileDone = completeBasics(p.profile) && !!resume;
+  const requiredProgress = [!!p.profile.name.trim() && !!p.profile.email, !!p.profile.major.trim(), p.profile.year > 0, p.profile.interests.some((interest) => interest.trim()), !!resume].filter(Boolean).length / 5;
   const mergedClubs = useMemo(() => clubs.map((club) => ({ ...club, ...p.clubSettings[club.id] })), [clubs, p.clubSettings]);
+  const renderEpoch = epochRef.current;
+  const renderActor = actorKey(p);
 
   const value: AppState = {
     ...p, ready, loadError, mutationError,
     clearMutationError: () => setMutationError(null),
-    saveStatus, profileSaveError,
+    saveStatus, profileSaveError, resume,
     clubs: mergedClubs, events, createClubEvent, updateClubEvent, matches: profileDone ? allMatches : [], profileDone, profileProgress: requiredProgress,
     clubById: (id) => mergedClubs.find((club) => club.id === id),
     applicationIdForClub: (id) => p.applicationIds[id],
     updateProfile, flushProfile, refresh, signIn, signOut,
-    resumeUploaded: () => {
-      const epoch = epochRef.current;
-      const actor = actorKey(pRef.current);
-      if (!actor) return;
-      matchEvidenceRevision.current += 1;
-      lastMatchInput.current = "";
-      lastMatchAt.current = 0;
+    resumeUploaded: (info) => {
+      const epoch = renderEpoch;
+      const actor = renderActor;
+      if (!actor || !sameActor(epoch, actor)) return;
+      if (!info?.id) { notifyFailure(new Error("The uploaded résumé could not be confirmed. Please upload the PDF again.")); return; }
+      resumeRevision.current += 1;
+      publishResume(info);
       void flushProfile().then(() => { if (sameActor(epoch, actor)) void loadMatches(epoch); }).catch(notifyFailure);
     },
     signUpStudent: (info) => register(() => api.registerStudent(info)),

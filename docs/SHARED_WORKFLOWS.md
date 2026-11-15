@@ -88,3 +88,7 @@ npm run workflow:verify
 ```
 
 It uses the configured verified-TLS database connection and actual `FrontendStore` methods. It creates synthetic Auth/profile/membership/application fixtures in one outer transaction and **always rolls back**; expected failures use savepoints so PostgreSQL constraint errors do not invalidate the rest of the check. It defaults to existing club `36288`, or accepts `WORKFLOW_VERIFY_CLUB_ID` for another existing club. The target club row/settings may be briefly locked/overridden inside that rollback transaction, so run it between manual review actions. Existing administrator records are not changed. Output contains fixed check labels and, on failure, a SQL state—not credentials, emails, or row data. This does not send email, test provider OAuth, or prove browser behavior.
+
+### Additive club metadata compatibility
+
+Stored club settings can contain additional top-level metadata from another feature version. Directory, organization, and submission reads validate supported fields through `readClubSettings`; extra fields are excluded from API projections. Known/nested fields, including deadlines, questions, and USC-ID consent requirements, remain strictly validated. Incoming settings patches still reject unsupported fields. Administrator updates atomically merge only validated changes into the JSONB document, preserving additional metadata such as `recruitmentTimeline` without replacing a stale copy of it.

@@ -320,6 +320,10 @@ export const clubSettingsSchema = z
       .optional(),
   })
   .strict();
+/** Read additive stored metadata without relaxing known or nested field validation. */
+export function readClubSettings(value: unknown) {
+  return clubSettingsSchema.strip().parse(value);
+}
 export const submitSchema = z
   .object({
     clubId: idSchema,
@@ -465,7 +469,7 @@ export function frontendClub(
   club: DirectoryClub,
   settings: Record<string, unknown> = {},
 ): FrontendClub {
-  const config = clubSettingsSchema.parse(settings);
+  const config = readClubSettings(settings);
   const shortName =
     club.name
       .replace(/\b(at|of|the|and|university|southern|california)\b/gi, "")

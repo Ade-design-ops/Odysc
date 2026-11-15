@@ -6,19 +6,21 @@ All browser requests send `credentials:'include'`. Private requests also send `X
 
 | Method and path | Body / result |
 | --- | --- |
-| `GET /api/session` | `{account,profile,workspace,organization}`; anonymous account/profile are null |
+| `GET /api/session` | `{account,profile,workspace,organization,resume}`; `resume` is private saved PDF metadata or null; anonymous account/profile/resume are null |
 | `POST /api/auth/register` | Student/officer signup fields, including password → `{requiresEmailConfirmation,session?}` |
 | `POST /api/auth/login` | `{email,password,as:'student'|'officer'}` → session context and HttpOnly cookie |
 | `POST /api/auth/logout` | `204` |
 | `GET /api/me`, `PATCH /api/me` | Flat `Student`; PATCH accepts editable fields only |
-| `POST /api/me/complete` | `{}` → student; validates name, year, major, interests |
+| `POST /api/me/complete` | `{}` → student; validates name, year, major, interests and saved own résumé PDF; missing PDF returns `400 RESUME_REQUIRED` |
 | `GET /api/workspace`, `PATCH /api/workspace` | Personal workspace; updates may include `expectedVersion` |
 | `GET /api/clubs` | Real directory/settings `Club[]` |
 | `GET /api/events`, `POST /api/events` | Actual club events; creation requires an active club administrator and returns 201. Browser writes include `X-Odysc-Actor`. |
 | `PATCH /api/events/:eventId` | Nonempty partial `{title,kind,start,durationMin,buildingCode,room}` → full persisted `ClubEvent` (200). Active administrator of that event's club required; `id` and `clubId` cannot change. |
 | `POST /api/ai/match` | Own optional `{studentId}` → `Match[]`, scores 0–1; another identity is rejected |
+| `POST /api/club-finder` | `{history?: FinderTurn[], resumeId?: UUID}` → `{reply,matches:[{clubId,name,reason,fit} ]}`; uses authenticated saved profile/PDF and real catalog; confirmed student context required. See [club-finder contract](../docs/CLUB_FINDER.md). |
 | `POST /api/ai/parse-resume` | Actual multipart PDF in field `resume` → suggestions, resume metadata, `needsReview:true` |
 | `GET /api/me/resume` | Own private PDF binary |
+| `GET /api/me/resume/status` | Private `{resume:ResumeInfo|null}`; authoritative uploaded-PDF status without file contents |
 | `GET /api/applications/mine` | Own real submitted applications |
 | `POST /api/applications` | `{clubId,answers,shareUscId?,rememberAnswers?}` → `{application,workspace}` |
 | `GET /api/clubs/:clubId/applicants` | Active members only; submitted snapshots and source-grounded summaries |
@@ -42,3 +44,5 @@ Club administrators publish events from **Club dashboard → Events → Publish 
 An active administrator can edit an existing event through `api.updateEvent(eventId, patch)` / `updateClubEvent(eventId, patch)`. The PATCH body includes only changed editable fields; `start` remains an ISO timestamp with an offset, and field validation matches creation. Event building codes come from the same [31-building campus catalog](../docs/CAMPUS_BUILDINGS.md) used by the dropdown and map. The server checks the event's persisted club and current membership. Missing events return 404, unauthorized edits return 403, and stale browser actors return 409. Failed edits leave the displayed event unchanged.
 
 Successful edits update the same event row and ID. The client replaces that event in its shared list, so existing RSVP/calendar selections stay attached and show the updated title, time and location. Other signed-in clients receive the updated event through the normal directory refresh/poll. Edits do not clear those selections or send notification emails. Previously downloaded `.ics` files are independent snapshots and must be downloaded/imported again to receive changes.
+
+Student onboarding requires a valid saved private PDF (5 MiB/10 pages) as well as name, year, major, and interests. Goals, bio, skills, and experience details remain optional. AI matching also returns `400 RESUME_REQUIRED` without the current student’s saved PDF. Scanned PDFs are accepted even if text extraction is unavailable. Existing profiles without a PDF stay editable but are incomplete; no profiles are bulk-reset. Uploaded PDFs and their text remain in the existing private backend storage and authenticated résumé endpoints, so this policy does not by itself move files into Supabase Storage or a teammate’s AI service.

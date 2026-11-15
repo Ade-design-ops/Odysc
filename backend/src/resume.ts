@@ -87,22 +87,22 @@ globalThis.fetch = async () => { throw new Error('External resources are disable
 function parseError(code: string): HttpError {
   switch (code) {
     case 'RESUME_PAGE_LIMIT':
-      return new HttpError(422, `Upload a résumé with at most ${MAX_RESUME_PAGES} pages, or skip this optional step.`, code);
+      return new HttpError(422, `Upload a résumé with at most ${MAX_RESUME_PAGES} pages.`, code);
     case 'RESUME_PASSWORD_PROTECTED':
-      return new HttpError(422, 'This PDF is password protected. Upload an unlocked copy, or skip this optional step.', code);
+      return new HttpError(422, 'This PDF is password protected. Upload an unlocked copy.', code);
     case 'RESUME_PARSE_TIMEOUT':
-      return new HttpError(422, 'This PDF took too long to read. Try a simpler PDF, or skip this optional step.', code);
+      return new HttpError(422, 'This PDF took too long to read. Try a simpler PDF.', code);
     default:
-      return new HttpError(422, 'This PDF could not be read. Upload a different PDF, or skip this optional step.', 'INVALID_RESUME_PDF');
+      return new HttpError(422, 'This PDF could not be read. Upload a different PDF.', 'INVALID_RESUME_PDF');
   }
 }
 
 export async function parseResumePdf(bytes: Uint8Array): Promise<ParsedResumePdf> {
   if (bytes.byteLength > MAX_RESUME_BYTES) {
-    throw new HttpError(413, 'Upload a PDF no larger than 5 MB.', 'RESUME_TOO_LARGE');
+    throw new HttpError(413, 'Upload a PDF no larger than 5 MiB.', 'RESUME_TOO_LARGE');
   }
   if (bytes.length < 8 || bytes[0] !== 0x25 || bytes[1] !== 0x50 || bytes[2] !== 0x44 || bytes[3] !== 0x46 || bytes[4] !== 0x2d) {
-    throw new HttpError(400, 'Upload a PDF file, or skip this optional step.', 'INVALID_RESUME_FILE');
+    throw new HttpError(400, 'Upload a PDF file.', 'INVALID_RESUME_FILE');
   }
   // Transfer a copy so the caller can still privately store the original PDF.
   const copy = Uint8Array.from(bytes);

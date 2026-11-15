@@ -29,6 +29,7 @@ Open [http://localhost:5173](http://localhost:5173). Vite forwards `/api` to `ht
 | Profile | Debounced server saves, explicit completion, optional profile extras, save status/error handling, and per-account state clearing |
 | Resume | Actual multipart PDF bytes; private saved file plus extracted suggestions marked for review, without silent profile replacement |
 | Directory and matching | Shared club IDs/data, actual settings, unavailable-fact handling, and scores normalized to 0–1 for the client |
+| Club-finder chat | Student-only floating chat reuses saved profile/PDF, invokes Claude explicitly, accepts follow-ups, and links actual club slugs. Anthropic key required; setup and privacy details in [CLUB_FINDER.md](CLUB_FINDER.md). |
 | Workspace | Persisted club list, drafts, in-app reminder preferences, personal calendar entries/colors/visibility, and server-derived application state |
 | Applications | Reviewed snapshots, deadline/question validation, duplicate prevention, optional USC ID sharing and explicit answer memory |
 | Officers | Pending membership requests, active-member review access, administrator team/settings/decision actions, and source-grounded applicant summaries |
@@ -66,7 +67,7 @@ The client includes check-email, forgot-password, reset-password, and auth-error
 
 ## Data and external-service limits
 
-Required onboarding remains name, year, major, and an interest. Resume, goals, bio, skills, experience, and USC ID are optional. A stored USC ID does not verify enrollment and is excluded from applications unless the club provides a reason and the student explicitly consents. Email confirmation establishes mailbox access, not university enrollment or USC SSO.
+Required onboarding is name, year, major, an interest, and a saved résumé PDF. Goals, bio, skills, experience details, and USC ID are optional. A filename or selected file alone does not count: browser session responses include trusted `resume` metadata, and `/api/me/complete` returns `400 RESUME_REQUIRED` without a saved own PDF. A stored USC ID does not verify enrollment and is excluded from applications unless the club provides a reason and the student explicitly consents. Email confirmation establishes mailbox access, not university enrollment or USC SSO.
 
 Unknown directory deadlines, selectivity, rates, and contacts remain unavailable until an authorized club supplies them. Zero-question submissions are Odysc prototype interest records; they do not establish participation in a club's official recruitment process.
 

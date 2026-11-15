@@ -31,6 +31,7 @@ function onboardingSnapshot(store: Store, user: User) {
     ...(!profile.academicYear ? ['academicYear'] : []),
     ...(!profile.major.trim() ? ['major'] : []),
     ...(!profile.interests.some(interest => interest.trim()) ? ['interests'] : []),
+    ...(!resume ? ['resume'] : []),
   ];
   const completedAt = missingRequiredFields.length === 0 ? saved.completedAt : null;
   const hasDraft = Boolean(saved.startedAt || resume || profile.major || profile.academicYear || profile.interests.length || profile.goals.length || profile.bio || profile.skills.length || profile.experience);
@@ -41,7 +42,7 @@ function onboardingSnapshot(store: Store, user: User) {
       completedAt,
       missingRequiredFields,
       recommendedFields: [
-        ...(!resume ? ['resume'] : []), ...(!profile.goals.length ? ['goals'] : []),
+        ...(!profile.goals.length ? ['goals'] : []),
         ...(!profile.bio ? ['bio'] : []), ...(!profile.skills.length ? ['skills'] : []),
       ],
     },
@@ -71,12 +72,12 @@ export async function registerOnboarding(app: FastifyInstance, store: Store) {
   });
 
   app.post('/api/v1/me/onboarding/complete', {
-    schema: { ...secured, summary: 'Finish student onboarding with only the required basics', body: Type.Object({}, { additionalProperties: false }) },
+    schema: { ...secured, summary: 'Finish student onboarding with the required profile fields and PDF résumé', body: Type.Object({}, { additionalProperties: false }) },
   }, request => {
     const user = requireUser(store, request, 'student');
     const snapshot = onboardingSnapshot(store, user);
     if (snapshot.onboarding.missingRequiredFields.length) {
-      throw new HttpError(400, `Complete these basics first: ${snapshot.onboarding.missingRequiredFields.join(', ')}. Optional details can be added later.`, 'MISSING_ONBOARDING_FIELDS');
+      throw new HttpError(400, `Complete these required fields first: ${snapshot.onboarding.missingRequiredFields.join(', ')}. Optional details can be added later.`, 'MISSING_ONBOARDING_FIELDS');
     }
     const now = new Date().toISOString();
     const saved = store.getOnboarding(user.id);
@@ -86,8 +87,8 @@ export async function registerOnboarding(app: FastifyInstance, store: Store) {
 
   app.post('/api/v1/me/resume', {
     schema: {
-      ...secured, tags: ['Student résumé'], summary: 'Upload or replace your optional private PDF résumé (multipart field: resume)',
-      description: 'Send one PDF file under the resume form field using multipart/form-data. Maximum 5 MiB and 10 pages. Résumé upload is optional and does not complete onboarding or overwrite your profile.',
+      ...secured, tags: ['Student résumé'], summary: 'Upload or replace your required private PDF résumé (multipart field: resume)',
+      description: 'Send one PDF file under the resume form field using multipart/form-data. Maximum 5 MiB and 10 pages. A saved PDF is required to complete onboarding and get club matches. Uploading does not complete onboarding or overwrite your profile.',
       consumes: ['multipart/form-data'],
     },
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
@@ -103,7 +104,7 @@ export async function registerOnboarding(app: FastifyInstance, store: Store) {
       const fileName = part.filename.split(/[\\/]/).pop()!.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 200) || 'resume.pdf';
       file = { bytes, fileName };
     }
-    if (!file) throw new HttpError(400, 'Choose a PDF résumé to upload, or skip this optional step.', 'MISSING_RESUME');
+    if (!file) throw new HttpError(400, 'Choose a PDF résumé to upload.', 'MISSING_RESUME');
     const parsed = await parseResumePdf(file.bytes);
     // A concurrent logout while parsing must not turn into a write after revocation.
     requireUser(store, request, 'student');
@@ -137,10 +138,14 @@ export async function registerOnboarding(app: FastifyInstance, store: Store) {
       .send(Buffer.from(resume.bytes));
   });
   app.delete('/api/v1/me/resume', {
-    schema: { ...secured, tags: ['Student résumé'], summary: 'Remove your optional résumé; onboarding stays complete' },
+    schema: { ...secured, tags: ['Student résumé'], summary: 'Remove your résumé and mark onboarding incomplete' },
   }, (request, reply) => {
     const user = requireUser(store, request, 'student');
-    if (!store.deleteResume(user.id)) throw new HttpError(404, 'You have not uploaded a résumé.', 'NOT_FOUND');
+    store.transaction(() => {
+      if (!store.deleteResume(user.id)) throw new HttpError(404, 'You have not uploaded a résumé.', 'NOT_FOUND');
+      const saved = store.getOnboarding(user.id);
+      store.saveOnboarding(user.id, { ...saved, completedAt: null });
+    });
     return reply.code(204).send();
   });
 }

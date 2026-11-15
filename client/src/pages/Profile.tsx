@@ -1,7 +1,7 @@
 // Profile, Common App style: sections on the left with checkmarks, one section at a time
 // on the right. Resume autofill does most of the work. "Saved answers" appears only once
 // you've submitted something.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Student } from "../../../shared/types";
 import { api } from "../api";
@@ -12,7 +12,7 @@ const YEARS = ["", "Freshman", "Sophomore", "Junior", "Senior", "Fifth year or l
 type SectionId = (typeof PROFILE_SECTIONS)[number]["id"] | "answers";
 
 export default function Profile() {
-  const { ready, profile, updateProfile, profileProgress, profileDone, answerBank, clubById, apps, saveStatus, profileSaveError, flushProfile, completeProfile, resumeUploaded } = useApp();
+  const { ready, profile, updateProfile, profileProgress, profileDone, answerBank, clubById, apps, saveStatus, profileSaveError, flushProfile, completeProfile, resumeUploaded, resume } = useApp();
   const sharedWith = Object.entries(apps).filter(([, a]) => a.sharedUscId).map(([id]) => clubById(id)?.shortName ?? id);
   const [active, setActive] = useState<SectionId>("academics");
   const [parsing, setParsing] = useState(false);
@@ -22,10 +22,14 @@ export default function Profile() {
   const [finishing, setFinishing] = useState(false);
   const toast = useToast();
   const nav = useNavigate();
+  const resumeInput = useRef<HTMLInputElement>(null);
+  const uploadOwner = useRef(profile.id);
+  uploadOwner.current = profile.id;
+  useEffect(() => { setParsing(false); setSuggested(null); setFileError(""); }, [profile.id]);
   if (!ready) return <Loading />;
 
   const sections: { id: SectionId; title: string; done: boolean }[] = [
-    ...PROFILE_SECTIONS.map((s) => ({ id: s.id, title: s.title, done: s.done(profile) })),
+    ...PROFILE_SECTIONS.map((s) => ({ id: s.id, title: s.title, done: s.done(profile, resume) })),
     ...(answerBank.length ? [{ id: "answers" as const, title: `Saved answers (${answerBank.length})`, done: true }] : []),
   ];
 
@@ -34,16 +38,31 @@ export default function Profile() {
     const pdf = file.type === "application/pdf" || (!file.type && /\.pdf$/i.test(file.name));
     if (!pdf || file.size === 0 || file.size > 5 * 1024 * 1024) return setFileError("Please upload a PDF up to 5 MB and 10 pages.");
     setFileError("");
+    setSuggested(null);
     setParsing(true);
+    const owner = profile.id;
+    const previousResumeId = resume?.id;
     try {
       const parsed = await api.parseResume(file);
-      resumeUploaded();
+      if (uploadOwner.current !== owner) return;
+      resumeUploaded(parsed.resume);
       setBasicExtraction(parsed.mode === "local");
       setSuggested(parsed);
       toast.show("Your PDF is saved privately. Review its suggestions before applying them.");
     } catch (error) {
-      setFileError(error instanceof Error ? error.message : "The PDF could not be uploaded. Try again.");
-    } finally { setParsing(false); }
+      if (uploadOwner.current !== owner) return;
+      const message = error instanceof Error ? error.message : "The PDF could not be uploaded. Try again.";
+      // PDF storage can succeed before an AI suggestions request fails. Recover
+      // only authoritative metadata for this same signed-in student.
+      try {
+        const status = await api.resumeStatus();
+        if (uploadOwner.current !== owner) return;
+        if (status.resume && status.resume.id !== previousResumeId) {
+          resumeUploaded(status.resume);
+          setFileError("Your PDF is saved. Suggestions could not be loaded; you can fill in your details manually.");
+        } else setFileError(message);
+      } catch { if (uploadOwner.current === owner) setFileError(message); }
+    } finally { if (uploadOwner.current === owner) setParsing(false); }
   };
 
   const applySuggestions = () => {
@@ -72,13 +91,14 @@ export default function Profile() {
       </div>
 
       <label className={`dropzone ${parsing ? "busy" : ""}`}>
-        <input type="file" accept="application/pdf" className="sr-only" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; void onResume(file); }} disabled={parsing} />
+        <input ref={resumeInput} type="file" accept="application/pdf" className="sr-only" required={!resume} aria-label={resume ? "Replace résumé PDF" : "Upload required résumé PDF"} aria-describedby={resume ? "resume-upload-note resume-upload-status" : "resume-upload-note"} onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; void onResume(file); }} disabled={parsing || finishing} />
         <div>
-          <div className="h3">{parsing ? "Reading your resume…" : "Autofill from your resume"}</div>
-          <div className="subtle">{parsing ? "Pulling out your major, experience and skills." : "Upload a PDF to review suggested details. You can edit anything."}</div>
+          <div className="h3">{parsing ? "Uploading and reading your résumé…" : "Your résumé"} <span className="req">*</span></div>
+          <div id="resume-upload-note" className="subtle">{parsing ? "Saving your PDF and looking for suggested profile details." : "Required to finish onboarding and get club recommendations. Upload a PDF up to 5 MB and 10 pages; review suggested details before applying them."}</div>
+          {resume && <div id="resume-upload-status" className="hint" role="status">Uploaded: {resume.fileName}. You can replace this PDF anytime.</div>}
           {fileError && <div role="alert" style={{ color: "var(--cardinal)", fontSize: 13, marginTop: 4 }}>{fileError}</div>}
         </div>
-        <span className="btn">{parsing ? "…" : "Upload PDF"}</span>
+        <span className="btn">{parsing ? "…" : resume ? "Replace PDF" : "Upload PDF"}</span>
       </label>
 
       {suggested && <div className="alert" role="status">
@@ -126,7 +146,7 @@ export default function Profile() {
             </Fields>
           )}
           {active === "experience" && (
-            <Fields title="Experience" hint="Optional: projects, jobs and volunteering. One per line.">
+            <Fields title="Résumé & experience" hint="The résumé PDF above is required. Projects, jobs, volunteering, and the details below are optional. One experience per line.">
               <textarea
                 className="input"
                 maxLength={4000}
@@ -160,13 +180,16 @@ export default function Profile() {
             <div className="row between" style={{ marginTop: 20 }}>
               <span className="subtle" role="status" aria-live="polite">{saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved" : saveStatus === "error" ? profileSaveError || "Could not save. Please try again." : "Edits save automatically"}</span>
               {profileDone ? (
-                <button className="btn primary" disabled={finishing} onClick={async () => { setFinishing(true); try { await flushProfile(); await completeProfile(); nav("/search"); } catch (error) { toast.show(error instanceof Error ? error.message : "Could not finish saving your profile."); } finally { setFinishing(false); } }}>{finishing ? "Saving…" : "Search clubs"}</button>
+                <button className="btn primary" disabled={finishing || parsing} onClick={async () => { setFinishing(true); try { await flushProfile(); await completeProfile(); nav("/search"); } catch (error) { toast.show(error instanceof Error ? error.message : "Could not finish saving your profile."); } finally { setFinishing(false); } }}>{finishing ? "Saving…" : "Search clubs"}</button>
+              ) : !resume && profile.name.trim() && profile.major.trim() && profile.year > 0 && profile.interests.some((interest) => interest.trim()) ? (
+                <button className="btn primary" disabled={parsing || finishing} onClick={() => resumeInput.current?.click()}>{parsing ? "Uploading…" : "Upload required PDF"}</button>
               ) : (
                 <button
                   className="btn"
+                  disabled={parsing || finishing}
                   onClick={() => {
                     const i = PROFILE_SECTIONS.findIndex((s) => s.id === active);
-                    const next = PROFILE_SECTIONS.slice(i + 1).concat(PROFILE_SECTIONS.slice(0, i)).find((s) => !s.done(profile));
+                    const next = PROFILE_SECTIONS.slice(i + 1).concat(PROFILE_SECTIONS.slice(0, i)).find((s) => !s.done(profile, resume));
                     if (next) setActive(next.id);
                     else toast.show(active === "interests" ? "Add at least one interest. Press Enter or click outside the field to save it." : "Complete this section before searching for clubs.");
                   }}

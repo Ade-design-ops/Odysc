@@ -38,20 +38,21 @@ The local fixture credentials shown later are not Supabase accounts and have not
 
 - Supabase-backed student sign-in, onboarding drafts, completion, and editable profiles for confirmed `@usc.edu` accounts.
 - Student signup, confirmation/resend, and password recovery/reset APIs, with private browser session cookies.
-- Required basics: name, academic year, major, and at least one interest.
-- Optional goals, bio, skills, and private PDF resume upload/download/replacement/deletion.
+- Required onboarding: name, academic year, major, at least one interest, and a successfully uploaded private PDF résumé.
+- Optional goals, bio, skills, and experience details. Required résumé PDFs support private upload/download/replacement/deletion; deleting the PDF makes onboarding incomplete.
 - Shared USC club catalog and individual club pages.
+- Student club-finder chat using the saved résumé/profile and real catalog, with Claude when `ANTHROPIC_API_KEY` is configured. See [setup and data flow](docs/CLUB_FINDER.md).
 - Pasted-background parsing and profile-based club matching, including optional extracted resume text.
 - Persisted club lists, drafts, calendar preferences/personal events, and in-app reminder preferences.
 - Real application snapshots and optional answer memory after explicit consent.
 - Pending officer requests, administrator approval, authorized team management, reviewer scores, and administrator decisions.
 - Persisted interview offers/bookings and authorized club event/settings endpoints.
 
-Resume uploads accept PDFs up to **5 MiB and 10 pages**. Files and their private metadata currently live in the backend's `data/resumes` directory, not Supabase Storage or SQLite. Use one backend instance and persistent storage for that directory. Text extraction happens locally, preserves entered profile fields, and does not perform OCR. Scanned PDFs can be saved; students can skip the resume and enter details themselves.
+Resume uploads accept PDFs up to **5 MiB and 10 pages**. Files and their private metadata currently live in the backend's `data/resumes` directory, not Supabase Storage or SQLite. Use one backend instance and persistent storage for that directory. Text extraction happens locally, preserves entered profile fields, and does not perform OCR. Scanned PDFs can be saved; readable extracted text is not required. The PDF itself is required before onboarding completion and club recommendations.
 
-The [student onboarding handoff](docs/STUDENT_ONBOARDING.md) defines Basics → Interests → Optional details → Finish. A confirmed USC account can use student or officer context; officer permissions come from approved club membership, not a self-selected role. An initial NSBE administrator for club `36288` was bootstrapped with explicit authorization. Other officer requests require approval.
+The [student onboarding handoff](docs/STUDENT_ONBOARDING.md) defines Basics → Interests → Résumé and optional details → Finish. A confirmed USC account can use student or officer context; officer permissions come from approved club membership, not a self-selected role. An initial NSBE administrator for club `36288` was bootstrapped with explicit authorization. Other officer requests require approval.
 
-AI uses OpenAI when configured and explicitly labeled local rules otherwise. Results require review and never automatically submit an application. With AI enabled, relevant profile text, extracted resume text, and club data are sent to the provider. The integration uses structured output and `store:false`; see the [official Structured Outputs documentation](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses).
+Existing extraction and numeric match cards use OpenAI when configured and local rules otherwise. The new [club-finder chat](docs/CLUB_FINDER.md) uses Claude and requires its own Anthropic key; it sends the saved PDF plus profile and conversation only on an explicit search/follow-up. Results require review and never automatically submit an application. With OpenAI enabled, relevant profile text, extracted resume text, and club data are sent to OpenAI. Those requests use structured output and `store:false`; see the [official Structured Outputs documentation](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses).
 
 ## Remaining external integrations
 
@@ -74,6 +75,8 @@ Use `backend/.env.example` as the configuration reference:
 | `SUPABASE_DB_URL` | Server-only verified database connection for club reads and authorized workflow transactions |
 | `SUPABASE_DB_CA_FILE` | Local path to the public root CA used for verified database TLS |
 | `RESUME_DIRECTORY` | Private filesystem storage; defaults to `./data/resumes` |
+| `ANTHROPIC_API_KEY` | Server-only Claude key for student-triggered club-finder chat |
+| `CLUB_FINDER_MODEL` | Claude model for the finder; default `claude-sonnet-5-5` |
 | `AUTH_PUBLIC_ORIGIN` | Backend origin for email callbacks; local default `http://localhost:3001` |
 | `AUTH_FRONTEND_ORIGIN` | Frontend origin after verification; local default `http://localhost:5173` |
 | `AUTH_FRONTEND_ROUTING` | `hash` for the current Vite HashRouter; `history` supports ordinary path routes |

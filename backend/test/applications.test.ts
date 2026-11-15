@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { Store } from '../src/db.js';
 import { seedDemo } from '../src/seed.js';
+import { pdfFixture } from './fixtures/pdf.js';
 
 const password = 'DemoPass123!';
 const validAnswers = {
@@ -118,6 +119,11 @@ test('profile extraction and answer suggestions require review and do not save d
   assert.equal(suggestion.json().answer, savedAnswers[0].answer);
   assert.deepEqual((await app.inject({ url: '/api/v1/me/answers', headers })).json().answers, savedAnswers);
   assert.deepEqual((await app.inject({ url: '/api/v1/me/applications', headers })).json().applications, []);
+  const boundary = 'native-match-pdf';
+  const uploaded = await app.inject({ method: 'POST', url: '/api/v1/me/resume', headers: { ...headers, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="resume"; filename="resume.pdf"\r\nContent-Type: application/pdf\r\n\r\n`), Buffer.from(pdfFixture({ text: '' })), Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]) });
+  assert.equal(uploaded.statusCode, 201, uploaded.body);
   const matches = await app.inject({ method: 'POST', url: '/api/v1/me/matches', headers });
   assert.equal(matches.statusCode, 200, matches.body);
   assert.equal(matches.json().mode, 'local');

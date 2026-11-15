@@ -116,29 +116,31 @@ test('resume endpoints require student authentication and never expose another s
   assert.notDeepEqual((await app.inject({ url: '/api/v1/me/resume', headers: owner })).rawPayload, Buffer.from(secondPdf));
 });
 
-test('resume remains optional and deleting a textless PDF preserves completed onboarding', async t => {
+test('a required textless PDF permits completion and deleting it invalidates onboarding', async t => {
   const { app } = await fixture(t);
-  const headers = await register(app, 'optional-resume@example.com');
+  const headers = await register(app, 'required-resume@example.com');
   const patch = await app.inject({ method: 'PATCH', url: '/api/v1/me/onboarding', headers, payload: { academicYear: 'first_year', major: 'Undeclared', interests: ['Still exploring'] } });
   assert.equal(patch.statusCode, 200, patch.body);
   const completed = await app.inject({ method: 'POST', url: '/api/v1/me/onboarding/complete', headers, payload: {} });
-  assert.equal(completed.statusCode, 200, completed.body);
-  assert.equal(completed.json().onboarding.status, 'completed');
-  assert.equal(completed.json().resume, null);
+  assert.equal(completed.statusCode, 400, completed.body);
+  assert.equal(completed.json().error.code, 'MISSING_ONBOARDING_FIELDS');
   const created = await upload(app, headers, [pdfPart(pdfFixture({ text: '' }))]);
   assert.equal(created.statusCode, 201, created.body);
   assert.equal(created.json().resume.textStatus, 'unavailable');
   assert.match(created.json().notice, /add interests and skills manually/);
+  const finished = await app.inject({ method: 'POST', url: '/api/v1/me/onboarding/complete', headers, payload: {} });
+  assert.equal(finished.statusCode, 200, finished.body);
+  assert.equal(finished.json().onboarding.status, 'completed');
   const deleted = await app.inject({ method: 'DELETE', url: '/api/v1/me/resume', headers });
   assert.equal(deleted.statusCode, 204, deleted.body);
   assert.equal((await app.inject({ url: '/api/v1/me/resume', headers })).statusCode, 404);
   const after = await app.inject({ url: '/api/v1/me/onboarding', headers });
   assert.equal(after.json().resume, null);
-  assert.equal(after.json().onboarding.status, 'completed');
-  assert.equal(after.json().onboarding.completedAt, completed.json().onboarding.completedAt);
-  assert.deepEqual(after.json().onboarding.missingRequiredFields, []);
-  assert.ok(after.json().onboarding.recommendedFields.includes('resume'));
-  assert.deepEqual(after.json().profile, completed.json().profile);
+  assert.equal(after.json().onboarding.status, 'in_progress');
+  assert.equal(after.json().onboarding.completedAt, null);
+  assert.deepEqual(after.json().onboarding.missingRequiredFields, ['resume']);
+  assert.equal(after.json().onboarding.recommendedFields.includes('resume'), false);
+  assert.deepEqual(after.json().profile, finished.json().profile);
 });
 
 test('invalid MIME, extension, header, malformed, oversized, and over-page PDFs preserve the last valid resume', async t => {
@@ -193,9 +195,14 @@ test('resume text improves local club matches without saving profile fields, ans
   const headers = await register(app, 'resume-matching@example.com');
   const profileBefore = (await app.inject({ url: '/api/v1/me/profile', headers })).json().profile;
   const baseline = await app.inject({ method: 'POST', url: '/api/v1/me/matches', headers });
-  assert.equal(baseline.statusCode, 200, baseline.body);
-  assert.equal(baseline.json().mode, 'local');
-  assert.ok(baseline.json().matches.every((match: { score: number }) => match.score === 0));
+  assert.equal(baseline.statusCode, 400, baseline.body);
+  assert.equal(baseline.json().error.code, 'RESUME_REQUIRED');
+  const blankPdf = await upload(app, headers, [pdfPart(pdfFixture({ text: '' }))]);
+  assert.equal(blankPdf.statusCode, 201, blankPdf.body);
+  const textless = await app.inject({ method: 'POST', url: '/api/v1/me/matches', headers });
+  assert.equal(textless.statusCode, 200, textless.body);
+  assert.equal(textless.json().mode, 'local');
+  assert.ok(textless.json().matches.every((match: { score: number }) => match.score === 0));
   const created = await upload(app, headers, [pdfPart(pdfFixture({ text: 'I built robotics projects using engineering, Python, and prototyping.' }))]);
   assert.equal(created.statusCode, 201, created.body);
   const withResume = await app.inject({ method: 'POST', url: '/api/v1/me/matches', headers });
@@ -208,5 +215,6 @@ test('resume text improves local club matches without saving profile fields, ans
   assert.deepEqual((await app.inject({ url: '/api/v1/me/applications', headers })).json().applications, []);
   assert.equal((await app.inject({ method: 'DELETE', url: '/api/v1/me/resume', headers })).statusCode, 204);
   const afterDeletion = await app.inject({ method: 'POST', url: '/api/v1/me/matches', headers });
-  assert.ok(afterDeletion.json().matches.every((match: { score: number }) => match.score === 0));
+  assert.equal(afterDeletion.statusCode, 400, afterDeletion.body);
+  assert.equal(afterDeletion.json().error.code, 'RESUME_REQUIRED');
 });

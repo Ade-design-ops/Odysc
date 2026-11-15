@@ -15,6 +15,7 @@ export async function registerSupabaseFeatures(app: FastifyInstance, gateway: Su
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
   }, async request => {
     const { user, token } = await gateway.getIdentity(supabaseBearer(request));
+    if (!await files.getInfo(user.id)) throw new HttpError(400, 'Upload a PDF résumé before getting club matches.', 'RESUME_REQUIRED');
     const row = await gateway.getProfile(token, user.id);
     const resumeText = await files.getText(user.id);
     const clubs = await catalog.listClubs();
@@ -25,8 +26,8 @@ export async function registerSupabaseFeatures(app: FastifyInstance, gateway: Su
 
   app.post('/api/v1/me/resume', {
     schema: {
-      ...secured, tags: ['Student résumé'], summary: 'Upload or replace your optional private PDF résumé',
-      description: 'Send one PDF in multipart field resume. Maximum 5 MiB and 10 pages. Private files persist on the backend volume; profile information is stored in Supabase.',
+      ...secured, tags: ['Student résumé'], summary: 'Upload or replace your required private PDF résumé',
+      description: 'Send one PDF in multipart field resume. Maximum 5 MiB and 10 pages. A saved PDF is required to finish onboarding and get club matches; readable text is not required. Private files persist on the backend volume; profile information is stored in Supabase.',
       consumes: ['multipart/form-data'],
     },
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
@@ -43,7 +44,7 @@ export async function registerSupabaseFeatures(app: FastifyInstance, gateway: Su
       const fileName = part.filename.split(/[\\/]/).pop()!.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 200) || 'resume.pdf';
       upload = { bytes, fileName };
     }
-    if (!upload) throw new HttpError(400, 'Choose a PDF résumé or skip this optional step.', 'MISSING_RESUME');
+    if (!upload) throw new HttpError(400, 'Choose a PDF résumé to upload.', 'MISSING_RESUME');
     const parsed = await parseResumePdf(upload.bytes);
     await gateway.getIdentity(token);
     const info = {
@@ -70,9 +71,13 @@ export async function registerSupabaseFeatures(app: FastifyInstance, gateway: Su
       .send(Buffer.from(resume.bytes));
   });
   app.delete('/api/v1/me/resume', {
-    schema: { ...secured, tags: ['Student résumé'], summary: 'Delete your optional private résumé' },
+    schema: { ...secured, tags: ['Student résumé'], summary: 'Delete your private résumé and mark onboarding incomplete' },
   }, async (request, reply) => {
-    const { user } = await gateway.getIdentity(supabaseBearer(request));
+    const { user, token } = await gateway.getIdentity(supabaseBearer(request));
+    if (!await files.getInfo(user.id)) throw new HttpError(404, 'You have not uploaded a résumé.', 'NOT_FOUND');
+    await gateway.request(`/rest/v1/student_profiles?user_id=eq.${encodeURIComponent(user.id)}`, {
+      method: 'PATCH', token, body: { onboarding_completed_at: null }, headers: { Prefer: 'return=minimal' },
+    });
     if (!await files.delete(user.id)) throw new HttpError(404, 'You have not uploaded a résumé.', 'NOT_FOUND');
     return reply.code(204).send();
   });

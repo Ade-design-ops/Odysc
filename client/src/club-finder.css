@@ -1,0 +1,81 @@
+/* Scoped floating club finder; existing page styles stay unchanged. */
+.cf { position: fixed; right: 20px; bottom: 20px; z-index: 45; display: flex; flex-direction: column; align-items: flex-end; gap: 12px; }
+.cf-launcher { position: relative; display: block; padding: 0; border: 0; background: none; cursor: pointer; border-radius: 50%; }
+.cf-launcher:focus-visible { outline: 3px solid var(--ink); outline-offset: 4px; }
+.cf-avatar { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; overflow: hidden; background: var(--cardinal); box-shadow: 0 0 0 3px var(--gold), 0 8px 24px rgba(60, 0, 0, 0.28); transition: transform 120ms ease-out; }
+.cf-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.cf-avatar-x { color: var(--paper); font-size: 30px; line-height: 1; }
+.cf-launcher:hover .cf-avatar { transform: scale(1.05); }
+.cf-launcher.open .cf-avatar { width: 52px; height: 52px; box-shadow: 0 0 0 3px var(--gold-soft); }
+
+/* Thought bubble up and to the left of the avatar, trailing two dots back to it. */
+.cf-thought { position: absolute; right: 54px; bottom: 66px; padding: 9px 15px; white-space: nowrap; background: var(--paper); color: var(--cardinal-dark); font-weight: 600; font-size: 14px; border: 2px solid var(--cardinal); border-radius: 22px; box-shadow: 0 6px 18px rgba(60, 0, 0, 0.16); animation: cf-think 2.4s ease-in-out 0.4s 2; }
+.cf-thought-dot { position: absolute; border-radius: 50%; background: var(--paper); border: 2px solid var(--cardinal); }
+.cf-thought-dot.big { width: 13px; height: 13px; right: 4px; bottom: -15px; }
+.cf-thought-dot.small { width: 8px; height: 8px; right: -6px; bottom: -26px; }
+@keyframes cf-think { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+
+.cf-panel { width: min(400px, calc(100vw - 40px)); height: min(600px, calc(100vh - 110px)); height: min(600px, calc(100dvh - 110px)); display: flex; flex-direction: column; background: var(--paper); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: 0 18px 48px rgba(40, 0, 0, 0.22); overflow: hidden; transform-origin: bottom right; animation: cf-open 160ms ease-out; }
+@keyframes cf-open { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
+
+.cf-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 14px 14px 12px 18px; background: var(--cardinal); color: var(--paper); border-bottom: 3px solid var(--gold); }
+.cf-title { margin: 0; font-size: 17px; line-height: 1.2; color: inherit; }
+.cf-sub { margin: 2px 0 0; font-size: 13px; opacity: 0.85; }
+.cf-head-actions { display: flex; align-items: center; gap: 4px; }
+.cf-head .btn.ghost { color: var(--paper); background: transparent; border-color: rgba(255, 255, 255, 0.6); }
+.cf-head .btn.ghost:hover, .cf-head .btn.ghost:focus-visible { color: var(--paper); background: rgba(255, 255, 255, 0.15); border-color: var(--paper); }
+.cf-close { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--paper); font-size: 22px; line-height: 1; cursor: pointer; }
+.cf-close:hover, .cf-close:focus-visible { background: rgba(255, 255, 255, 0.15); }
+
+.cf-log { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; background: var(--paper-2); }
+.cf-msg { max-width: 88%; min-width: 0; overflow-wrap: anywhere; padding: 9px 13px; border-radius: 14px; font-size: 14px; line-height: 1.45; }
+.cf-msg p { margin: 0; white-space: pre-wrap; }
+.cf-msg.bot { align-self: flex-start; background: var(--paper); border: 1px solid var(--line-2); border-bottom-left-radius: 4px; color: var(--ink); }
+.cf-msg.me { align-self: flex-end; background: var(--cardinal); color: var(--paper); border-bottom-right-radius: 4px; }
+
+.cf-matches { list-style: none; margin: 10px 0 2px; padding: 0; display: grid; gap: 8px; }
+.cf-match { padding: 10px 12px; border-left: 3px solid var(--gold); background: var(--paper-2); border-radius: 0 8px 8px 0; }
+.cf-match-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.cf-match-name { min-width: 0; overflow-wrap: anywhere; font-weight: 600; color: var(--cardinal-dark); }
+.cf-fit { flex-shrink: 0; white-space: nowrap; font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 6px; }
+.cf-fit.strong { background: var(--gold-soft); color: var(--cardinal-dark); }
+.cf-fit.good { background: var(--paper); color: var(--ink-2); border: 1px solid var(--line-2); }
+.cf-reason { margin: 3px 0 0; font-size: 13px; color: var(--ink-2); }
+
+.cf-typing { display: inline-flex; gap: 4px; padding: 12px 14px; }
+.cf-typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); animation: cf-dot 1s infinite ease-in-out; }
+.cf-typing span:nth-child(2) { animation-delay: 0.15s; }
+.cf-typing span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes cf-dot { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+
+.cf-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; border-top: 1px solid var(--line-2); background: var(--paper); }
+.cf-chip { padding: 5px 11px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--paper); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.cf-chip:hover { border-color: var(--cardinal); }
+.cf-chip.on { background: var(--gold-soft); border-color: var(--cardinal); color: var(--cardinal-dark); font-weight: 600; }
+.cf-chip:focus-visible { outline: 2px solid var(--cardinal); outline-offset: 2px; }
+.cf-continue { margin-left: auto; }
+
+.cf-context { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 10px 14px; border-bottom: 1px solid var(--line-2); font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+.cf-context a { color: var(--cardinal-dark); text-decoration: underline; }
+.cf-error { margin: 8px 14px 0; overflow-wrap: anywhere; }
+.cf-error p { margin: 0 0 6px; }
+.cf-compose { display: flex; gap: 8px; padding: 10px 14px 14px; background: var(--paper); }
+.cf-compose .input { flex: 1; min-width: 0; }
+
+@media (max-width: 560px) {
+  .cf { right: 12px; bottom: calc(74px + env(safe-area-inset-bottom)); }
+  .cf-panel { position: fixed; inset: 0 0 calc(58px + env(safe-area-inset-bottom)) 0; width: 100%; height: auto; max-height: 100dvh; border-radius: 0; border: 0; }
+  .cf-launcher.open { display: none; }
+  .cf-avatar { width: 56px; height: 56px; }
+  .cf-thought { right: 46px; bottom: 58px; font-size: 13px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cf-panel, .cf-thought { animation: none; }
+  .cf-avatar { transition: none; }
+  .cf-typing span { animation: none; opacity: 0.6; }
+}
+
+@media (min-width: 561px) and (max-width: 860px) {
+  .cf { bottom: calc(74px + env(safe-area-inset-bottom)); }
+  .cf-panel { height: min(540px, calc(100dvh - 170px - env(safe-area-inset-bottom))); }
+}

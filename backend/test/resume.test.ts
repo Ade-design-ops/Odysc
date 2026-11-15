@@ -39,7 +39,7 @@ test('PDF resume extraction accepts the page limit and bounds extracted text', a
   assert.ok(long.text.length > 0 && long.text.length <= 20_000);
 });
 
-test('PDFs without extractable text are accepted so optional onboarding can continue manually', async () => {
+test('PDFs without extractable text satisfy the file requirement without requiring OCR', async () => {
   const result = await parseResumePdf(pdfFixture({ text: '' }));
   assert.deepEqual(result, { text: '', pageCount: 1, textStatus: 'unavailable' });
 });

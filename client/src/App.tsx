@@ -5,6 +5,7 @@ import Auth from "./pages/Auth";
 import { AuthError, CheckEmail, ForgotPassword, ResetPassword } from "./pages/AuthFlows";
 import ClubPage from "./pages/ClubPage";
 import Calendar from "./pages/Calendar";
+import ClubFinder from "./components/ClubFinder";
 import Dashboard from "./pages/Dashboard";
 import Landing from "./pages/Landing";
 import MyClubs from "./pages/MyClubs";
@@ -15,7 +16,7 @@ import { useApp } from "./store";
 
 export default function App() {
   const { pathname } = useLocation();
-  const { account, ready, loadError, mutationError, clearMutationError, refresh } = useApp();
+  const { account, profile, resume, ready, loadError, mutationError, clearMutationError, refresh } = useApp();
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);
@@ -65,6 +66,7 @@ export default function App() {
           </span>
         </div>
       </footer>}
+      {role === "student" && <ClubFinder key={`${profile.id}:${resume?.id ?? "none"}`} />}
       <Toast message={mutationError} onDone={clearMutationError} />
     </div>
   );

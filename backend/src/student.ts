@@ -41,6 +41,7 @@ export async function registerStudent(app: FastifyInstance, store: Store, ai: Ai
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
   }, async request => {
     const user = requireUser(store, request, 'student');
+    if (!store.getResumeInfo(user.id)) throw new HttpError(400, 'Upload a PDF résumé before getting club matches.', 'RESUME_REQUIRED');
     const clubs = store.listClubs();
     const resumeText = store.getResumeText(user.id);
     const result = await matchClubs({ ...store.getProfile(user.id), ...(resumeText ? { resumeText } : {}) }, clubs, ai);

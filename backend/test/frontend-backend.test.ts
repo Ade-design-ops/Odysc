@@ -14,6 +14,7 @@ import {
   frontendClub,
   interviewSchema,
   clubSettingsSchema,
+  readClubSettings,
   sourceSummary,
   validated,
   workspacePatchSchema,
@@ -27,11 +28,18 @@ import type { ResumeFiles } from "../src/resume-files.js";
 import type { SupabaseCatalogService } from "../src/supabase-catalog.js";
 import { mapDirectoryClub } from "../src/supabase-catalog.js";
 import { BUILDINGS } from "../src/campus-buildings.js";
+import type { ResumeInfo, StudentResume } from "../src/models.js";
+import { pdfFixture } from "./fixtures/pdf.js";
 const studentId = "11111111-1111-4111-8111-111111111111";
 const otherId = "22222222-2222-4222-8222-222222222222";
 const appId = "33333333-3333-4333-8333-333333333333";
 const eventId = "55555555-5555-4555-8555-555555555555";
 const at = "2026-11-14T12:00:00.000Z";
+const savedResume: ResumeInfo = {
+  id: "77777777-7777-4777-8777-777777777777", fileName: "resume.pdf",
+  mimeType: "application/pdf", sizeBytes: 1000, pageCount: 1,
+  textStatus: "available", uploadedAt: at,
+};
 const actor: Actor = {
   user: {
     id: studentId,
@@ -116,6 +124,7 @@ function databaseFixture(now?: () => number) {
     targetAccount: { id: otherId, email: "reviewer@usc.edu", confirmed: true } as
       { id: string; email: string; confirmed: boolean } | null,
     settings: {} as Record<string, unknown>,
+    concurrentMetadata: undefined as Record<string, unknown> | undefined,
     data: { profileExtras: { uscId: "8765432109" } } as Record<string, unknown>,
     app: application,
     insertedApp: undefined as Row | undefined,
@@ -209,6 +218,13 @@ function databaseFixture(now?: () => number) {
       rows = [];
     else if (sql.startsWith("UPDATE public.odysc_student_workspaces"))
       state.data = JSON.parse(String(values[1]));
+    else if (sql.startsWith("INSERT INTO public.odysc_club_settings")) {
+      state.settings = {
+        ...state.settings,
+        ...state.concurrentMetadata,
+        ...JSON.parse(String(values[3])),
+      };
+    }
     else if (sql.startsWith("UPDATE public.odysc_club_memberships SET access='admin'")) {
       if (state.targetMembership?.id === values[0])
         state.targetMembership = { ...state.targetMembership, access: "admin" };
@@ -591,6 +607,83 @@ test("directory adapters retain unknown metadata rather than inventing selectivi
   assert.deepEqual(club.questions, []);
   assert.deepEqual(club.contacts, []);
 });
+test("stored additive club metadata is ignored while all recognized fields remain validated", () => {
+  const stored = {
+    description: "A student workshop group.",
+    deadline: "2099-05-01",
+    requiresUscId: true,
+    uscIdReason: "Used to verify attendance at the check-in desk.",
+    questions: [{ id: "why", prompt: "Why this group?", maxWords: 100 }],
+    recruitmentTimeline: { stages: [{ title: "Open house", details: { optional: true } }] },
+  };
+  const { recruitmentTimeline: _timeline, ...known } = stored;
+  assert.deepEqual(readClubSettings(stored), known);
+  const club = frontendClub(directoryClub, stored);
+  assert.equal(club.description, known.description);
+  assert.equal(club.deadline, known.deadline);
+  assert.equal(club.requiresUscId, true);
+  assert.deepEqual(club.questions, known.questions);
+  assert.equal(Object.hasOwn(club, "recruitmentTimeline"), false);
+  assert.equal(clubSettingsSchema.safeParse(stored).success, false, "incoming writes remain strict");
+  for (const invalid of [
+    { ...stored, deadline: "TBD" },
+    { ...stored, requiresUscId: "yes" },
+    { ...stored, questions: [{ id: "why", prompt: "Why?", futureNestedKey: true }] },
+  ]) {
+    assert.throws(() => readClubSettings(invalid));
+    assert.throws(() => frontendClub(directoryClub, invalid));
+  }
+});
+test("additive stored metadata cannot bypass submission deadlines, questions or USC-ID consent", async () => {
+  const { store, state } = databaseFixture(() => Date.parse("2026-11-15T12:00:00Z"));
+  state.settings = {
+    recruitmentTimeline: { stages: ["Open house", "Interviews"] },
+    deadline: "2026-11-14",
+    questions: [{ id: "why", prompt: "Why this group?", maxWords: 2 }],
+    requiresUscId: true,
+    uscIdReason: "Used to verify attendance at the check-in desk.",
+  };
+  await assert.rejects(store.submit(actor, { clubId: "1", answers: [] }),
+    (error) => error instanceof HttpError && error.code === "APPLICATION_CLOSED");
+  state.settings.deadline = "2026-11-16";
+  await assert.rejects(store.submit(actor, { clubId: "1", answers: [] }),
+    (error) => error instanceof HttpError && error.code === "MISSING_ANSWERS");
+  await assert.rejects(store.submit(actor, { clubId: "1", answers: [{ questionId: "why", text: "One two three" }] }),
+    (error) => error instanceof HttpError && error.code === "ANSWER_TOO_LONG");
+  await assert.rejects(store.submit(actor, { clubId: "1", answers: [{ questionId: "why", text: "Build together" }] }),
+    (error) => error instanceof HttpError && error.code === "USC_ID_CONSENT_REQUIRED");
+  assert.equal(state.insertedApp, undefined);
+  const result = await store.submit(actor, { clubId: "1", answers: [{ questionId: "why", text: "Build together" }], shareUscId: true });
+  assert.equal(result.application.answers[0]!.text, "Build together");
+  assert.equal(state.insertedApp?.share_usc_id, true);
+
+  const malformed = databaseFixture();
+  malformed.state.settings = { recruitmentTimeline: {}, deadline: "TBD" };
+  await assert.rejects(malformed.store.submit(actor, { clubId: "1", answers: [] }));
+  assert.equal(malformed.state.insertedApp, undefined, "invalid known configuration fails closed");
+});
+test("administrator settings edits preserve concurrent future metadata without exposing it in organization DTOs", async () => {
+  const { store, state, calls } = databaseFixture();
+  state.membership = member("admin");
+  const timeline = { stages: [{ title: "Open house", details: { room: "101" } }] };
+  const latestTimeline = { stages: [...timeline.stages, { title: "Interview", details: { room: "202" } }] };
+  state.settings = { tagline: "Original tagline", requiresUscId: false, recruitmentTimeline: timeline };
+  state.concurrentMetadata = { recruitmentTimeline: latestTimeline, futureMetadata: { retained: [1, 2] } };
+  const organization = await store.updateSettings(actor, "1", { tagline: " Updated tagline " });
+  assert.equal(state.settings.tagline, "Updated tagline");
+  assert.deepEqual(state.settings.recruitmentTimeline, latestTimeline);
+  assert.deepEqual(state.settings.futureMetadata, { retained: [1, 2] });
+  assert.deepEqual(organization.clubSettings["1"], { tagline: "Updated tagline", requiresUscId: false });
+  const write = calls.find((call) => call.sql.startsWith("INSERT INTO public.odysc_club_settings"))!;
+  assert.match(write.sql, /data=public\.odysc_club_settings\.data \|\| \$4::jsonb/);
+  assert.deepEqual(JSON.parse(String(write.values[1])), { tagline: "Updated tagline", requiresUscId: false });
+  assert.deepEqual(JSON.parse(String(write.values[3])), { tagline: "Updated tagline" });
+  const before = calls.filter((call) => call.sql.startsWith("INSERT INTO public.odysc_club_settings")).length;
+  await assert.rejects(store.updateSettings(actor, "1", { recruitmentTimeline: { stages: [] } }),
+    (error) => error instanceof HttpError && error.statusCode === 400 && error.code === "VALIDATION_ERROR");
+  assert.equal(calls.filter((call) => call.sql.startsWith("INSERT INTO public.odysc_club_settings")).length, before);
+  assert.deepEqual(state.settings.recruitmentTimeline, latestTimeline);
+});
 test("application summaries only report submitted facts and flag injected instructions as untrusted text", () => {
   const student = application.profile_snapshot;
   const result = sourceSummary(student, [
@@ -609,7 +702,7 @@ test("application summaries only report submitted facts and flag injected instru
 });
 async function apiFixture(
   t: TestContext,
-  options: { eventError?: HttpError; logoutStatus?: number; promotionError?: HttpError } = {},
+  options: { eventError?: HttpError; logoutStatus?: number; promotionError?: HttpError; clubSettings?: Record<string, Record<string, unknown>>; resumes?: Record<string, ResumeInfo>; autoConfirmSignup?: boolean; profileError?: HttpError } = {},
 ) {
   const providerCalls: {
     path: string;
@@ -629,8 +722,12 @@ async function apiFixture(
       const path = new URL(String(input)).pathname;
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       providerCalls.push({ path, body });
-      if (path.endsWith("/user"))
-        return new Response(JSON.stringify(user), { status: 200 });
+      if (path.endsWith("/user")) {
+        const other = new Headers(init?.headers).get("authorization") === "Bearer other-token";
+        return new Response(JSON.stringify(other ? { ...user, id: otherId, email: "other@usc.edu" } : user), { status: 200 });
+      }
+      if (path.endsWith("/token") || (path.endsWith("/signup") && options.autoConfirmSignup))
+        return Response.json({ user, access_token: "test-token", refresh_token: "test-refresh", expires_in: 3600 });
       if (path.endsWith("/signup"))
         return new Response(JSON.stringify(user), { status: 200 });
       if (path.endsWith("/logout")) {
@@ -642,6 +739,17 @@ async function apiFixture(
   });
   let privateCalls = 0;
   let recorded: Row | undefined;
+  const resumes = new Map(Object.entries(options.resumes ?? {}));
+  const resumeReads: string[] = [];
+  const completions: string[] = [];
+  const ownProfile = (identity: Actor) => ({
+    id: identity.user.id, email: identity.user.email, name: "Test Student",
+    year: 2, major: "Engineering", skills: ["Python"], interests: ["robotics"], experiences: [], goals: [],
+  });
+  const sessionFor = (identity: Actor) => ({
+    account: { role: "student", name: "Test Student", email: identity.user.email },
+    profile: ownProfile(identity), workspace: emptyWorkspace(), organization: null,
+  });
   const eventCalls: {
     identity: Actor;
     input: Parameters<FrontendStore["createEvent"]>[1];
@@ -654,29 +762,29 @@ async function apiFixture(
   const promotions: { identity: Actor; clubId: string; email: string }[] = [];
   const store = {
     async close() {},
-    async getSession() {
+    async getSession(identity: Actor) {
       privateCalls++;
-      return {
-        account: {
-          role: "student",
-          name: user.user_metadata.name,
-          email: user.email,
-        },
-        profile: { id: studentId },
-        workspace: emptyWorkspace(),
-        organization: null,
-      };
+      return sessionFor(identity);
     },
     async getProfile(identity: Actor) {
       privateCalls++;
-      assert.equal(identity.user.id, studentId);
-      return { id: studentId };
+      if (options.profileError) throw options.profileError;
+      return ownProfile(identity);
+    },
+    async saveProfile(identity: Actor, _patch: unknown, complete: boolean) {
+      privateCalls++;
+      if (complete) completions.push(identity.user.id);
+      return ownProfile(identity);
+    },
+    async requestMembership(identity: Actor) {
+      privateCalls++;
+      return sessionFor(identity);
     },
     async recordSignup(_user: unknown, input: Row) {
       recorded = input;
     },
     async clubSettings() {
-      return {};
+      return options.clubSettings ?? {};
     },
     async createEvent(
       identity: Actor,
@@ -733,7 +841,12 @@ async function apiFixture(
         return directoryClub;
       },
     } as unknown as SupabaseCatalogService,
-    resumeFiles: {} as ResumeFiles,
+    resumeFiles: {
+      async getInfo(id: string) { resumeReads.push(id); return resumes.get(id); },
+      async getText() { return "Skills: Python"; },
+      async save(resume: StudentResume) { resumes.set(resume.studentId, resume.info); },
+    } as unknown as ResumeFiles,
+    ai: { apiKey: "" },
     dbUrl: "",
     caFile: "",
   });
@@ -744,6 +857,9 @@ async function apiFixture(
     eventCalls,
     eventUpdates,
     promotions,
+    resumes,
+    resumeReads,
+    completions,
     get privateCalls() {
       return privateCalls;
     },
@@ -767,6 +883,155 @@ test("anonymous browser bootstrap is safe and private frontend endpoints require
   });
   assert.equal(owner.statusCode, 200);
   assert.equal(owner.json().id, studentId);
+});
+test("resume session metadata and status are private to the verified account", async (t) => {
+  const otherResume = { ...savedResume, id: otherId, fileName: "other-private.pdf" };
+  const fixture = await apiFixture(t, { resumes: { [studentId]: savedResume, [otherId]: otherResume } });
+  const anonymous = await fixture.app.inject("/api/session");
+  assert.equal(anonymous.json().resume, null);
+  const denied = await fixture.app.inject("/api/me/resume/status");
+  assert.equal(denied.statusCode, 401);
+  assert.equal(fixture.resumeReads.length, 0);
+  const headers = { authorization: "Bearer test-token" };
+  const session = await fixture.app.inject({ url: "/api/session", headers });
+  assert.deepEqual(session.json().resume, savedResume);
+  const status = await fixture.app.inject({ url: `/api/me/resume/status?studentId=${otherId}`, headers });
+  assert.equal(status.statusCode, 200);
+  assert.deepEqual(status.json().resume, savedResume);
+  assert.equal(status.headers["cache-control"], "private, no-store");
+  assert.equal(status.body.includes("other-private"), false);
+  assert.deepEqual(fixture.resumeReads, [studentId, studentId]);
+  const other = await fixture.app.inject({ url: "/api/session", headers: { authorization: "Bearer other-token" } });
+  assert.deepEqual(other.json().resume, otherResume);
+  assert.equal(other.json().profile.id, otherId);
+  assert.equal(fixture.resumeReads.at(-1), otherId);
+});
+test("student completion requires a persisted own PDF and rejects client claims or another account's file", async (t) => {
+  const fixture = await apiFixture(t, { resumes: { [otherId]: savedResume } });
+  const headers = { authorization: "Bearer test-token" };
+  const missing = await fixture.app.inject({ method: "POST", url: "/api/me/complete", headers, payload: {} });
+  assert.equal(missing.statusCode, 400);
+  assert.equal(missing.json().error.code, "RESUME_REQUIRED");
+  assert.deepEqual(fixture.completions, []);
+  for (const payload of [{ fileName: "resume.pdf" }, { hasResume: true }, { resume: savedResume }, { studentId: otherId }]) {
+    const forged = await fixture.app.inject({ method: "POST", url: "/api/me/complete", headers, payload });
+    assert.equal(forged.statusCode, 400);
+    assert.equal(forged.json().error.code, "VALIDATION_ERROR");
+  }
+  const forgedProfile = await fixture.app.inject({ method: "PATCH", url: "/api/me", headers, payload: { resume: savedResume } });
+  assert.equal(forgedProfile.statusCode, 400);
+  assert.deepEqual(fixture.completions, []);
+  fixture.resumes.set(studentId, savedResume);
+  const complete = await fixture.app.inject({ method: "POST", url: "/api/me/complete", headers, payload: {} });
+  assert.equal(complete.statusCode, 200, complete.body);
+  assert.deepEqual(fixture.completions, [studentId]);
+  const reads = fixture.resumeReads.length;
+  const stale = await fixture.app.inject({
+    method: "POST", url: "/api/me/complete", headers: { ...headers, "x-odysc-actor": otherId }, payload: {},
+  });
+  assert.equal(stale.statusCode, 409);
+  assert.equal(fixture.resumeReads.length, reads);
+  assert.deepEqual(fixture.completions, [studentId]);
+});
+test("login, auto-confirmed registration and organizer requests return persisted resume metadata", async (t) => {
+  const fixture = await apiFixture(t, { resumes: { [studentId]: savedResume }, autoConfirmSignup: true });
+  const login = await fixture.app.inject({
+    method: "POST", url: "/api/auth/login", payload: { email: actor.user.email, password: "Long-test-password1!", as: "student" },
+  });
+  assert.equal(login.statusCode, 200, login.body);
+  assert.deepEqual(login.json().resume, savedResume);
+  const registration = await fixture.app.inject({
+    method: "POST", url: "/api/auth/register", payload: { name: "Test Student", email: actor.user.email, password: "Long-test-password1!", role: "student" },
+  });
+  assert.equal(registration.statusCode, 201, registration.body);
+  assert.deepEqual(registration.json().session.resume, savedResume);
+  const request = await fixture.app.inject({
+    method: "POST", url: "/api/organizer/request", headers: { authorization: "Bearer test-token" },
+    payload: { clubId: "1", officerRole: "Vice President" },
+  });
+  assert.equal(request.statusCode, 200, request.body);
+  assert.deepEqual(request.json().resume, savedResume);
+  assert.deepEqual(fixture.resumeReads, [studentId, studentId, studentId]);
+});
+test("club matching requires a saved PDF but does not require OCR or readable PDF text", async (t) => {
+  const fixture = await apiFixture(t, { resumes: { [otherId]: savedResume } });
+  const headers = { authorization: "Bearer test-token" };
+  const forbidden = await fixture.app.inject({ method: "POST", url: "/api/ai/match", headers, payload: { studentId: otherId } });
+  assert.equal(forbidden.statusCode, 403);
+  assert.equal(fixture.resumeReads.length, 0);
+  const missing = await fixture.app.inject({ method: "POST", url: "/api/ai/match", headers, payload: {} });
+  assert.equal(missing.statusCode, 400);
+  assert.equal(missing.json().error.code, "RESUME_REQUIRED");
+  assert.equal(fixture.privateCalls, 0);
+  fixture.resumes.set(studentId, { ...savedResume, textStatus: "unavailable" });
+  const matched = await fixture.app.inject({ method: "POST", url: "/api/ai/match", headers, payload: {} });
+  assert.equal(matched.statusCode, 200, matched.body);
+  assert.ok(Array.isArray(matched.json()));
+  assert.equal(matched.json()[0].clubId, "1");
+});
+test("a valid PDF upload enables completion and invalid replacement preserves the persisted PDF", async (t) => {
+  const fixture = await apiFixture(t);
+  const upload = (bytes: Uint8Array) => {
+    const boundary = "odysc-browser-resume-test";
+    return fixture.app.inject({
+      method: "POST", url: "/api/ai/parse-resume",
+      headers: { authorization: "Bearer test-token", "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload: Buffer.concat([
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="resume"; filename="resume.pdf"\r\nContent-Type: application/pdf\r\n\r\n`),
+        Buffer.from(bytes), Buffer.from(`\r\n--${boundary}--\r\n`),
+      ]),
+    });
+  };
+  const uploaded = await upload(pdfFixture({ text: "" }));
+  assert.equal(uploaded.statusCode, 201, uploaded.body);
+  assert.equal(uploaded.json().resume.textStatus, "unavailable");
+  const original = uploaded.json().resume;
+  const headers = { authorization: "Bearer test-token" };
+  const complete = await fixture.app.inject({ method: "POST", url: "/api/me/complete", headers, payload: {} });
+  assert.equal(complete.statusCode, 200, complete.body);
+  const failed = await upload(Buffer.from("not a valid PDF"));
+  assert.equal(failed.statusCode, 400, failed.body);
+  const status = await fixture.app.inject({ url: "/api/me/resume/status", headers });
+  assert.deepEqual(status.json().resume, original);
+  const session = await fixture.app.inject({ url: "/api/session", headers });
+  assert.deepEqual(session.json().resume, original);
+});
+test("resume status reports a durable upload even if returning profile suggestions subsequently fails", async (t) => {
+  const fixture = await apiFixture(t, { profileError: new HttpError(503, "Profile temporarily unavailable.", "WORKFLOW_UNAVAILABLE") });
+  const boundary = "odysc-browser-resume-suggestions-test";
+  const uploaded = await fixture.app.inject({
+    method: "POST", url: "/api/ai/parse-resume",
+    headers: { authorization: "Bearer test-token", "content-type": `multipart/form-data; boundary=${boundary}` },
+    payload: Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="resume"; filename="resume.pdf"\r\nContent-Type: application/pdf\r\n\r\n`),
+      Buffer.from(pdfFixture()), Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]),
+  });
+  assert.equal(uploaded.statusCode, 503);
+  const headers = { authorization: "Bearer test-token" };
+  const status = await fixture.app.inject({ url: "/api/me/resume/status", headers });
+  assert.equal(status.statusCode, 200);
+  assert.equal(status.json().resume.fileName, "resume.pdf");
+  assert.equal(status.json().resume.pageCount, 1);
+  const completed = await fixture.app.inject({ method: "POST", url: "/api/me/complete", headers, payload: {} });
+  assert.equal(completed.statusCode, 200, completed.body);
+  assert.deepEqual(fixture.completions, [studentId]);
+});
+test("the public directory stays available when stored club settings contain future top-level metadata", async (t) => {
+  const fixture = await apiFixture(t, { clubSettings: { "1": {
+    tagline: "A real student workshop group.",
+    deadline: "2099-05-01",
+    questions: [{ id: "why", prompt: "Why this group?" }],
+    recruitmentTimeline: { stages: [{ title: "Open house" }] },
+  } } });
+  const response = await fixture.app.inject("/api/clubs");
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.json().length, 1);
+  assert.equal(response.json()[0].id, "1");
+  assert.equal(response.json()[0].tagline, "A real student workshop group.");
+  assert.equal(response.json()[0].deadline, "2099-05-01");
+  assert.equal(response.json()[0].questions[0].id, "why");
+  assert.equal(Object.hasOwn(response.json()[0], "recruitmentTimeline"), false);
 });
 test("promotion HTTP requests require a current actor and accept only a normalized target email", async (t) => {
   const fixture = await apiFixture(t);

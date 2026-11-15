@@ -51,6 +51,7 @@ export interface SessionState {
   profile: Student | null;
   workspace: WorkspaceState;
   organization: OrganizationState | null;
+  resume: ResumeInfo | null;
 }
 export interface StudentSignupInfo {
   name: string;
@@ -88,11 +89,16 @@ export interface ParsedResumeResponse {
   skills?: string[];
   interests?: string[];
   experiences?: string[];
-  resume?: ResumeInfo;
+  resume: ResumeInfo;
   needsReview: true;
   notice?: string;
   mode?: string;
 }
+
+export interface FinderTurn { role: "user" | "assistant"; content: string }
+export interface FinderMatch { clubId: string; name: string; reason: string; fit: "strong" | "good" }
+export interface FinderReply { reply: string; matches: FinderMatch[] }
+export interface FinderRequest { history?: FinderTurn[]; resumeId?: string }
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly code?: string, readonly actorId?: string) {
@@ -153,6 +159,7 @@ export const api = {
   recoverySession: () => request<{ valid: boolean }>("/v1/auth/recovery-session"),
   resetPassword: (password: string) => request<{ message: string }>("/v1/auth/reset-password", "POST", { password }),
   me: () => request<Student>("/me"),
+  resumeStatus: () => request<{ resume: ResumeInfo | null }>("/me/resume/status"),
   saveProfile: (patch: Partial<Student>) => request<Student>("/me", "PATCH", patch),
   completeProfile: () => request<Student>("/me/complete", "POST", {}),
   workspace: () => request<WorkspaceState>("/workspace"),
@@ -163,6 +170,7 @@ export const api = {
   updateEvent: (eventId: string, patch: Partial<Omit<ClubEvent, "id" | "clubId">>) => request<ClubEvent>(`/events/${encodeURIComponent(eventId)}`, "PATCH", patch),
   myApplications: () => request<Application[]>("/applications/mine"),
   matches: (_studentId?: string) => request<Match[]>("/ai/match", "POST", {}),
+  clubFinder: (input: FinderRequest = {}) => request<FinderReply>("/club-finder", "POST", input),
   parseResume: (file: File) => {
     const body = new FormData();
     body.append("resume", file);

@@ -12,14 +12,14 @@ const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
 
 export default function Dashboard() {
   const s = useApp();
-  const { ready, profile, profileDone, profileProgress, myClubs, clubById, events, seenUnlock, markUnlockSeen, matches, calAdded, personal, toggleCalEvent, interviews, applicationIdForClub } = s;
+  const { ready, profile, resume, profileDone, profileProgress, myClubs, clubById, events, seenUnlock, markUnlockSeen, matches, calAdded, personal, toggleCalEvent, interviews, applicationIdForClub } = s;
   const interviewForClub = (id: string) => interviews[applicationIdForClub(id) ?? ""];
   if (!ready) return <Loading />;
   const first = profile.preferredName || profile.name.split(" ")[0];
 
   // ----- Step 1: brand-new user -----
   if (!profileDone) {
-    const next = PROFILE_SECTIONS.find((sec) => !sec.done(profile));
+    const next = PROFILE_SECTIONS.find((sec) => !sec.done(profile, resume));
     return (
       <>
         <HomeBand kicker="Fight on" title={<>Welcome, <em>{first}</em></>} sub="Your account is set up. Finish your profile once and use it for every club." />
@@ -30,7 +30,7 @@ export default function Dashboard() {
             <div style={{ flex: 1 }}>
               <div className="subtle">Step 1 of 2</div>
               <div className="h3">{profileProgress <= 0.25 ? "Build your profile" : `Continue: ${next?.title}`}</div>
-              <div className="subtle">Upload your resume and we'll fill most of it in.</div>
+              <div className="subtle">A résumé PDF is required for club recommendations. Review any suggested details before applying them.</div>
             </div>
             <span className="btn primary">Start</span>
           </Link>
