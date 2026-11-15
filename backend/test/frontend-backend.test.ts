@@ -105,6 +105,16 @@ function databaseFixture(now?: () => number) {
     reviews: [] as Row[],
     offeredSlots: undefined as (string|Date)[]|undefined,
     membership: null as MembershipRow | null,
+    targetMembership: {
+      ...member("reviewer"),
+      id: "66666666-6666-4666-8666-666666666666",
+      user_id: otherId,
+      email: "reviewer@usc.edu",
+      full_name: "Test Reviewer",
+      officer_role: "Vice President",
+    } as MembershipRow | null,
+    targetAccount: { id: otherId, email: "reviewer@usc.edu", confirmed: true } as
+      { id: string; email: string; confirmed: boolean } | null,
     settings: {} as Record<string, unknown>,
     data: { profileExtras: { uscId: "8765432109" } } as Record<string, unknown>,
     app: application,
@@ -129,8 +139,14 @@ function databaseFixture(now?: () => number) {
   ) => {
     calls.push({ sql, values });
     let rows: Row[] = [];
-    if (sql.startsWith("SELECT id FROM auth.users"))
-      rows = state.eligible ? [{ id: studentId }] : [];
+    if (sql.startsWith("SELECT id FROM auth.users")) {
+      if (values[0] === studentId) rows = state.eligible ? [{ id: studentId }] : [];
+      else {
+        const account = state.targetAccount;
+        rows = account?.id === values[0] && account.email.toLowerCase() === String(values[1]).toLowerCase()
+          && /^[^\s@]+@usc\.edu$/i.test(account.email) && account.confirmed ? [{ id: account.id }] : [];
+      }
+    }
     else if (sql.startsWith("INSERT INTO public.odysc_student_workspaces"))
       rows = sql.includes("RETURNING") ? [{ user_id: studentId }] : [];
     else if (sql.startsWith("SELECT user_id::text,version,data"))
@@ -153,6 +169,11 @@ function databaseFixture(now?: () => number) {
       rows = Object.keys(state.settings).length
         ? [{ data: state.settings }]
         : [];
+    else if (sql.startsWith("SELECT id::text,club_id::text,user_id::text") && sql.includes("AND email=$2 FOR UPDATE"))
+      rows = state.targetMembership?.club_id === values[0] && state.targetMembership.email === values[1]
+        ? [state.targetMembership as unknown as Row] : [];
+    else if (sql.startsWith("SELECT id::text,club_id::text,user_id::text") && sql.includes("WHERE club_id=$1::bigint ORDER BY"))
+      rows = [state.membership, state.targetMembership].filter((item) => item?.club_id === values[0]) as unknown as Row[];
     else if (sql.startsWith("SELECT id::text,club_id::text,user_id::text")) {
       const matching = state.membership && (sql.includes("WHERE user_id=$1::uuid")
         ? state.membership.user_id===values[0] && (!sql.includes("email=lower($2::text)") || state.membership.email===String(values[1]).toLowerCase())
@@ -188,6 +209,10 @@ function databaseFixture(now?: () => number) {
       rows = [];
     else if (sql.startsWith("UPDATE public.odysc_student_workspaces"))
       state.data = JSON.parse(String(values[1]));
+    else if (sql.startsWith("UPDATE public.odysc_club_memberships SET access='admin'")) {
+      if (state.targetMembership?.id === values[0])
+        state.targetMembership = { ...state.targetMembership, access: "admin" };
+    }
     else if (sql.startsWith("INSERT INTO public.odysc_answer_bank")) {
       const key=String(values[1])+":"+String(values[3]);
       if(state.remembered.has(key) && !sql.includes("ON CONFLICT")) throw {code:"23505"};
@@ -277,6 +302,88 @@ test("reviewers cannot invite teammates or change club settings", async () => {
     ),
     false,
   );
+});
+test("administrator promotion locks the club and target, verifies the linked account and preserves member identity", async () => {
+  const { store, state, calls } = databaseFixture();
+  state.membership = member("admin");
+  const before = { ...state.targetMembership! };
+  const organization = await store.promoteMember(actor, "1", before.email);
+
+  assert.deepEqual(state.targetMembership, { ...before, access: "admin" });
+  assert.equal(organization.teams["1"]?.find((item) => item.email === before.email)?.access, "admin");
+  assert.equal(organization.teams["1"]?.find((item) => item.email === before.email)?.officerRole, "Vice President");
+  const clubLock = calls.findIndex((call) => call.sql.startsWith("SELECT club_id FROM public.clubs"));
+  const actorMembership = calls.findIndex((call) => call.sql.includes("AND user_id=$2::uuid"));
+  const targetLock = calls.findIndex((call) => call.sql.includes("AND email=$2 FOR UPDATE"));
+  const targetAccount = calls.findIndex((call) => call.sql.startsWith("SELECT id FROM auth.users") && call.values[0] === otherId);
+  const promotion = calls.findIndex((call) => call.sql.startsWith("UPDATE public.odysc_club_memberships SET access='admin'"));
+  assert.ok(clubLock >= 0 && clubLock < actorMembership && actorMembership < targetLock && targetLock < targetAccount && targetAccount < promotion);
+  assert.deepEqual(calls[targetLock]!.values, ["1", before.email]);
+  assert.deepEqual(calls[targetAccount]!.values, [otherId, before.email]);
+  assert.match(calls[targetAccount]!.sql, /email_confirmed_at IS NOT NULL FOR SHARE/);
+  assert.match(calls[targetAccount]!.sql, /lower\(email\)=lower\(\$2::text\)/);
+  assert.match(calls[targetAccount]!.sql, /email ~\*/);
+  assert.deepEqual(calls[promotion]!.values, [before.id]);
+  assert.doesNotMatch(calls[promotion]!.sql, /SET.*(?:user_id|club_id|officer_role|status|full_name)=/);
+
+  await store.promoteMember(actor, "1", before.email);
+  assert.equal(calls.filter((call) => call.sql.startsWith("UPDATE public.odysc_club_memberships SET access='admin'")).length, 1, "already-admin promotion is idempotent");
+  assert.equal(state.rollbacks, 0);
+});
+test("promotion denies students, reviewers and stale or unrelated administrator memberships before locking the target", async () => {
+  for (const membership of [
+    null, member("reviewer"),
+    { ...member("admin"), club_id: "2" },
+    { ...member("admin"), user_id: otherId },
+    { ...member("admin"), email: "old-address@usc.edu" },
+    { ...member("admin"), status: "pending" as const },
+  ]) {
+    const { store, state, calls } = databaseFixture();
+    state.membership = membership;
+    await assert.rejects(store.promoteMember(actor, "1", "reviewer@usc.edu"),
+      (error) => error instanceof HttpError && error.statusCode === 403);
+    assert.equal(calls.some((call) => call.sql.includes("AND email=$2 FOR UPDATE")), false);
+    assert.equal(calls.some((call) => call.sql.startsWith("UPDATE public.odysc_club_memberships SET access='admin'")), false);
+    assert.equal(state.targetMembership?.access, "reviewer");
+  }
+  const current = databaseFixture();
+  current.state.membership = member("admin");
+  current.state.eligible = false;
+  await assert.rejects(current.store.promoteMember(actor, "1", "reviewer@usc.edu"),
+    (error) => error instanceof HttpError && error.statusCode === 401);
+  assert.equal(current.calls.length, 1);
+});
+test("promotion rejects pending, invited, unlinked, changed-email and unconfirmed targets", async () => {
+  for (const configure of [
+    (state: ReturnType<typeof databaseFixture>["state"]) => { state.targetMembership!.status = "pending"; },
+    (state: ReturnType<typeof databaseFixture>["state"]) => { state.targetMembership!.status = "invited"; },
+    (state: ReturnType<typeof databaseFixture>["state"]) => { state.targetMembership!.user_id = null; },
+    (state: ReturnType<typeof databaseFixture>["state"]) => { state.targetAccount = null; },
+    (state: ReturnType<typeof databaseFixture>["state"]) => { state.targetAccount!.email = "changed@usc.edu"; },
+    (state: ReturnType<typeof databaseFixture>["state"]) => { state.targetAccount!.email = "changed@example.com"; },
+    (state: ReturnType<typeof databaseFixture>["state"]) => { state.targetAccount!.confirmed = false; },
+    (state: ReturnType<typeof databaseFixture>["state"]) => { state.targetMembership!.access = "admin"; state.targetAccount!.confirmed = false; },
+  ]) {
+    const { store, state, calls } = databaseFixture();
+    state.membership = member("admin");
+    configure(state);
+    await assert.rejects(store.promoteMember(actor, "1", "reviewer@usc.edu"),
+      (error) => error instanceof HttpError && error.statusCode === 409 && error.code === "MEMBER_NOT_ELIGIBLE");
+    assert.equal(calls.some((call) => call.sql.startsWith("UPDATE public.odysc_club_memberships SET access='admin'")), false);
+    assert.equal(state.rollbacks, 1);
+  }
+});
+test("promotion cannot create a target or grant access to a member belonging to another club", async () => {
+  for (const otherClub of [false, true]) {
+    const { store, state, calls } = databaseFixture();
+    state.membership = member("admin");
+    if (otherClub) state.targetMembership!.club_id = "2";
+    else state.targetMembership = null;
+    await assert.rejects(store.promoteMember(actor, "1", "reviewer@usc.edu"),
+      (error) => error instanceof HttpError && error.statusCode === 404);
+    assert.equal(calls.some((call) => call.sql.startsWith("UPDATE public.odysc_club_memberships SET access='admin'")), false);
+    assert.equal(calls.some((call) => call.sql.startsWith("INSERT INTO public.odysc_club_memberships")), false);
+  }
 });
 test("event edits preserve the persisted club, creator and untouched timestamp while updating only supplied fields", async () => {
   const { store, state, calls } = databaseFixture();
@@ -502,7 +609,7 @@ test("application summaries only report submitted facts and flag injected instru
 });
 async function apiFixture(
   t: TestContext,
-  options: { eventError?: HttpError; logoutStatus?: number } = {},
+  options: { eventError?: HttpError; logoutStatus?: number; promotionError?: HttpError } = {},
 ) {
   const providerCalls: {
     path: string;
@@ -544,6 +651,7 @@ async function apiFixture(
     eventId: string;
     patch: Parameters<FrontendStore["updateEvent"]>[2];
   }[] = [];
+  const promotions: { identity: Actor; clubId: string; email: string }[] = [];
   const store = {
     async close() {},
     async getSession() {
@@ -589,6 +697,12 @@ async function apiFixture(
       eventUpdates.push({ identity, eventId: id, patch });
       return { id, clubId: "1", title: "Robotics workshop", kind: "Workshop", start: at, durationMin: 60, buildingCode: "TCC", room: "101", ...patch };
     },
+    async promoteMember(identity: Actor, clubId: string, email: string) {
+      privateCalls++;
+      if (options.promotionError) throw options.promotionError;
+      promotions.push({ identity, clubId, email });
+      return { myMembership: { email: identity.user.email, access: "admin", status: "active" }, teams: { [clubId]: [{ email, access: "admin", status: "active" }] }, scores: {}, decisions: {}, clubSettings: {}, interviews: {} };
+    },
   } as unknown as FrontendStore;
   const app = Fastify({ logger: false });
   app.setErrorHandler((error, _request, reply) =>
@@ -629,6 +743,7 @@ async function apiFixture(
     providerCalls,
     eventCalls,
     eventUpdates,
+    promotions,
     get privateCalls() {
       return privateCalls;
     },
@@ -652,6 +767,55 @@ test("anonymous browser bootstrap is safe and private frontend endpoints require
   });
   assert.equal(owner.statusCode, 200);
   assert.equal(owner.json().id, studentId);
+});
+test("promotion HTTP requests require a current actor and accept only a normalized target email", async (t) => {
+  const fixture = await apiFixture(t);
+  const url = "/api/clubs/1/team/promote";
+  const anonymous = await fixture.app.inject({ method: "POST", url, payload: { email: "reviewer@usc.edu" } });
+  assert.equal(anonymous.statusCode, 401);
+  const stale = await fixture.app.inject({
+    method: "POST", url, headers: { authorization: "Bearer test-token", "x-odysc-actor": otherId },
+    payload: { email: "reviewer@usc.edu" },
+  });
+  assert.equal(stale.statusCode, 409);
+  assert.equal(stale.json().error.code, "SESSION_CHANGED");
+  const headers = { authorization: "Bearer test-token" };
+  for (const payload of [
+    {}, { email: "not-an-email" }, { email: "reviewer@example.com" },
+    { email: "reviewer@usc.edu", access: "admin" },
+    { email: "reviewer@usc.edu", clubId: "2" },
+    { email: "reviewer@usc.edu", userId: otherId },
+  ]) {
+    const response = await fixture.app.inject({ method: "POST", url, headers, payload });
+    assert.equal(response.statusCode, 400, response.body);
+  }
+  const invalidClub = await fixture.app.inject({
+    method: "POST", url: "/api/clubs/not-a-club/team/promote", headers, payload: { email: "reviewer@usc.edu" },
+  });
+  assert.equal(invalidClub.statusCode, 400);
+  assert.equal(fixture.privateCalls, 0);
+
+  const response = await fixture.app.inject({
+    method: "POST", url, headers, payload: { email: " Reviewer@USC.edu " },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(fixture.promotions.length, 1);
+  assert.equal(fixture.promotions[0]!.identity.user.id, studentId);
+  assert.equal(fixture.promotions[0]!.clubId, "1");
+  assert.equal(fixture.promotions[0]!.email, "reviewer@usc.edu");
+  assert.equal(response.json().teams["1"][0].access, "admin");
+});
+test("promotion HTTP requests retain permission, missing-target and eligibility errors", async (t) => {
+  for (const [status, code] of [[403, "CLUB_ACCESS_REQUIRED"], [404, "NOT_FOUND"], [409, "MEMBER_NOT_ELIGIBLE"]] as const) {
+    const fixture = await apiFixture(t, { promotionError: new HttpError(status, "Promotion unavailable.", code) });
+    const response = await fixture.app.inject({
+      method: "POST", url: "/api/clubs/1/team/promote", headers: { authorization: "Bearer test-token" },
+      payload: { email: "reviewer@usc.edu" },
+    });
+    assert.equal(response.statusCode, status);
+    assert.equal(response.json().error.code, code);
+    assert.equal(fixture.promotions.length, 0);
+  }
 });
 test("event publishing requires authentication and validates location details before writing", async (t) => {
   const fixture = await apiFixture(t);

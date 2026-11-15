@@ -179,6 +179,7 @@ export const api = {
   bookInterview: (applicationId: string, slot: string | null) => request<WorkspaceState>(`/interviews/${encodeURIComponent(applicationId)}/book`, "POST", { slot }),
   inviteMember: (clubId: string, email: string, name: string, officerRole: string) => request<OrganizationState>(`/clubs/${encodeURIComponent(clubId)}/team/invite`, "POST", { email: email.trim(), name, officerRole }),
   approveMember: (clubId: string, email: string) => request<OrganizationState>(`/clubs/${encodeURIComponent(clubId)}/team/approve`, "POST", { email }),
+  promoteMember: (clubId: string, email: string) => request<OrganizationState>(`/clubs/${encodeURIComponent(clubId)}/team/promote`, "POST", { email: email.trim() }),
   removeMember: (clubId: string, email: string) => request<OrganizationState>(`/clubs/${encodeURIComponent(clubId)}/team/${encodeURIComponent(email)}`, "DELETE"),
   setClubSetting: (clubId: string, patch: ClubSettings) => request<OrganizationState>(`/clubs/${encodeURIComponent(clubId)}/settings`, "PATCH", patch),
 };

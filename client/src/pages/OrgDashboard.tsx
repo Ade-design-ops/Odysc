@@ -397,7 +397,7 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
 
 /* ---------- team ---------- */
 function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
-  const { teams, approveMember, removeMember, inviteMember, account } = useApp();
+  const { teams, approveMember, removeMember, inviteMember, promoteMember, account, clubById } = useApp();
   const team = teams[clubId] ?? [];
   const [f, setF] = useState({ email: "", name: "", role: "Vice President" });
   const [err, setErr] = useState<string | null>(null);
@@ -406,6 +406,31 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
   const toast = useToast();
   const pending = team.filter((m) => m.status === "pending");
   const rest = team.filter((m) => m.status !== "pending");
+  const [promoting, setPromoting] = useState<TeamMember | null>(null);
+  const [promotionError, setPromotionError] = useState("");
+  const promotionTrigger = useRef<HTMLButtonElement | null>(null);
+  const rosterHeading = useRef<HTMLHeadingElement>(null);
+  const closePromotion = () => {
+    if (inFlight.current) return;
+    setPromoting(null);
+    setPromotionError("");
+    requestAnimationFrame(() => (promotionTrigger.current?.isConnected ? promotionTrigger.current : rosterHeading.current)?.focus());
+  };
+  const grantAdmin = async () => {
+    if (inFlight.current || !promoting) return;
+    const target = promoting;
+    inFlight.current = true;
+    setBusy(true);
+    setPromotionError("");
+    try {
+      await promoteMember(target.email);
+      setPromoting(null);
+      toast.show(`${target.name} is now a club admin.`);
+      requestAnimationFrame(() => rosterHeading.current?.focus());
+    } catch (failure) {
+      setPromotionError(failure instanceof Error ? failure.message : "Admin access could not be granted. Please try again.");
+    } finally { inFlight.current = false; setBusy(false); }
+  };
 
   const invite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -460,7 +485,7 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
           </div>
         )}
         <div className="card">
-          <h2 className="h3">Your e-board on OdySC</h2>
+          <h2 ref={rosterHeading} tabIndex={-1} className="h3">Your e-board on OdySC</h2>
           {rest.map((m) => (
             <div key={m.email} className="member-row">
               <span className="avatar" aria-hidden="true">{m.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</span>
@@ -470,6 +495,14 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
               </div>
               <div className="row" style={{ gap: 8 }}>
                 {m.status === "invited" ? <span className="pill gold">Invited</span> : <span className={`pill ${m.access === "admin" ? "cardinal" : ""}`}>{m.access === "admin" ? "Admin" : "Reviewer"}</span>}
+                {isAdmin && m.status === "active" && m.access === "reviewer" && m.email !== account?.email && (
+                  <button className="btn sm" disabled={busy} onClick={(event) => {
+                    promotionTrigger.current = event.currentTarget;
+                    setErr(null);
+                    setPromotionError("");
+                    setPromoting(m);
+                  }} aria-label={`Make ${m.name} an admin`}>Make admin</button>
+                )}
                 {isAdmin && m.email !== account?.email && <button className="btn sm ghost" disabled={busy} onClick={() => { void changeMember(() => removeMember(m.email), `${m.name}'s access was removed.`); }} aria-label={`Remove ${m.name}`}>Remove</button>}
               </div>
             </div>
@@ -506,7 +539,46 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
       </div>
       <Toast message={toast.msg} onDone={toast.clear} />
     </div>
+    {promoting && isAdmin && <AdminAccessModal member={promoting} clubName={clubById(clubId)?.shortName ?? "this club"} pending={busy} error={promotionError} onCancel={closePromotion} onConfirm={() => { void grantAdmin(); }} />}
     </>
+  );
+}
+
+function AdminAccessModal({ member, clubName, pending, error, onCancel, onConfirm }: {
+  member: TeamMember; clubName: string; pending: boolean; error: string; onCancel: () => void; onConfirm: () => void;
+}) {
+  const cancel = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => { cancel.current?.focus(); }, []);
+  useEffect(() => { if (pending) panel.current?.focus(); }, [pending]);
+  const keyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") { event.preventDefault(); if (!pending) onCancel(); return; }
+    if (event.key !== "Tab") return;
+    const fields = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])')).filter((element) => element.getClientRects().length > 0);
+    const first = fields[0];
+    const last = fields[fields.length - 1];
+    if (!first || !last) { event.preventDefault(); panel.current?.focus(); }
+    else if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel.current)) { event.preventDefault(); first.focus(); }
+  };
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !pending) onCancel(); }}>
+      <div ref={panel} className="modal" role="dialog" aria-modal="true" aria-labelledby="admin-access-title" aria-describedby="admin-access-note" aria-busy={pending} tabIndex={-1} onKeyDown={keyboard}>
+        <div className="modal-head">
+          <h2 id="admin-access-title" className="h3">Give admin access?</h2>
+          <button className="icon-btn" disabled={pending} onClick={onCancel} aria-label="Close admin access dialog">×</button>
+        </div>
+        <div className="modal-body stack">
+          <p>Make <strong>{member.name}</strong> (<strong>{member.email}</strong>) an admin of <strong>{clubName}</strong>?</p>
+          <p id="admin-access-note" className="subtle">They will be able to manage the e-board, publish and edit events, change club settings, and make final application decisions. Your own admin access stays active.</p>
+          {error && <p className="field-error" role="alert">{error}</p>}
+          <div className="row between wrap">
+            <button ref={cancel} className="btn ghost" disabled={pending} onClick={onCancel}>Cancel</button>
+            <button className="btn primary" disabled={pending} onClick={onConfirm}>{pending ? "Granting access…" : "Grant admin access"}</button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

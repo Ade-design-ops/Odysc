@@ -97,6 +97,7 @@ export interface AppState extends DataState {
   demoInterview: (clubId: string) => Promise<void>;
   inviteMember: (email: string, name: string, officerRole: string) => Promise<string | null>;
   approveMember: (email: string) => Promise<void>;
+  promoteMember: (email: string) => Promise<void>;
   removeMember: (email: string) => Promise<void>;
   setClubSetting: (clubId: string, patch: ClubSettings) => Promise<void>;
 }
@@ -629,6 +630,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       catch (error) { return errorMessage(error); }
     },
     approveMember: (email) => mutateOrganization(() => api.approveMember(requireOfficerClub(), email)),
+    promoteMember: (email) => mutateOrganization(() => api.promoteMember(requireOfficerClub(), email)),
     removeMember: (email) => mutateOrganization(() => api.removeMember(requireOfficerClub(), email)),
     setClubSetting: (clubId, patch) => mutateOrganization(() => api.setClubSetting(clubId, patch)),
   };

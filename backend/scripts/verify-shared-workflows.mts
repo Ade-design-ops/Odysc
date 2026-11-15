@@ -134,6 +134,31 @@ try {
     const claimed = await store.getSession(invitee, 'officer');
     verify(claimed.account?.verified === true && claimed.organization?.myMembership?.status === 'active' && claimed.organization.myMembership.access === 'reviewer');
   });
+  await step('administrator_promotion_checks_permissions_and_confirmed_membership', async () => {
+    await q.query('SAVEPOINT administrator_promotion_check');
+    try {
+      await denied(() => store.promoteMember(reviewer, clubId, admin.user.email), [403]);
+      await denied(() => store.promoteMember(admin, otherClub, reviewer.user.email), [403]);
+      await denied(() => store.promoteMember(admin, clubId, `odysc-verify-${suffix}-missing@usc.edu`), [404]);
+      await q.query("UPDATE public.odysc_club_memberships SET status='pending' WHERE club_id=$1::bigint AND user_id=$2::uuid", [clubId, reviewer.user.id]);
+      await denied(() => store.promoteMember(admin, clubId, reviewer.user.email), [409]);
+      await q.query("UPDATE public.odysc_club_memberships SET status='active' WHERE club_id=$1::bigint AND user_id=$2::uuid", [clubId, reviewer.user.id]);
+      await q.query("INSERT INTO public.odysc_club_memberships(club_id,user_id,email,full_name,officer_role,access,status) VALUES($1::bigint,$2::uuid,$3,$4,'Rollback-only target','reviewer','active')", [clubId, unconfirmed.user.id, unconfirmed.user.email, unconfirmed.user.name]);
+      await denied(() => store.promoteMember(admin, clubId, unconfirmed.user.email), [409]);
+      const promoted = await store.promoteMember(admin, clubId, reviewer.user.email);
+      const target = promoted.teams[clubId]?.find(member => member.email === reviewer.user.email);
+      verify(target?.access === 'admin' && target.status === 'active' && target.officerRole === 'Rollback-only officer');
+      const repeated = await store.promoteMember(admin, clubId, reviewer.user.email);
+      verify(repeated.teams[clubId]?.find(member => member.email === reviewer.user.email)?.id === target.id);
+      const access = await store.getSession(reviewer, 'officer');
+      verify(access.organization?.myMembership?.access === 'admin');
+      const current = await store.getOrganization(admin);
+      verify(current.myMembership?.access === 'admin');
+    } finally {
+      await q.query('ROLLBACK TO SAVEPOINT administrator_promotion_check');
+      await q.query('RELEASE SAVEPOINT administrator_promotion_check');
+    }
+  });
   await step('usctype_reason_and_current_questions_configured', async () => {
     await denied(() => store.updateSettings(admin, clubId, { requiresUscId: true, uscIdReason: 'short' }), [400]);
     await store.updateSettings(admin, clubId, { requiresUscId: true, uscIdReason: 'Rollback-only documented student ID purpose.', questions: [{ id: 'one', prompt: 'Describe your contribution.', maxWords: 8 }, { id: 'two', prompt: 'Describe your contribution.', maxWords: 8 }], deadline: '' });

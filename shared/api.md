@@ -23,10 +23,13 @@ All browser requests send `credentials:'include'`. Private requests also send `X
 | `POST /api/applications` | `{clubId,answers,shareUscId?,rememberAnswers?}` → `{application,workspace}` |
 | `GET /api/clubs/:clubId/applicants` | Active members only; submitted snapshots and source-grounded summaries |
 | `GET /api/organizer/state`, `POST /api/organizer/request` | Current officer context, or pending `{clubId,officerRole}` request |
+| `POST /api/clubs/:clubId/team/promote` | Active club administrator only; `{email}` → updated organization state. Promotes an existing active, linked member with a current confirmed USC email to administrator. |
 | Club team/settings, application reviews/decisions, interview offers/bookings | Authorized shared operations; full paths and shapes in [SHARED_WORKFLOWS.md](../docs/SHARED_WORKFLOWS.md) |
 | `POST /api/ai/summarize` | Authorized reviewer `{applicationId}` → grounded `Summary` |
 
 Email confirmation/resend, forgot-password, recovery-session, and reset-password use the existing `/api/v1/auth/*` routes. Signup/reset passwords require 10–128 characters; sign-in lets Supabase verify an existing nonempty password. Exact confirmed USC emails are required. Selecting officer context creates or uses a membership; it does not self-approve access.
+
+Administrator promotion uses `api.promoteMember(clubId, email)` / `promoteMember(email)`. The backend checks the acting administrator and the target's current same-club membership and confirmed USC account; the browser supplies only the target email. Missing members return 404, ineligible targets return `409 MEMBER_NOT_ELIGIBLE`, and unauthorized actors return 403. Promoting an eligible existing administrator is idempotent. The returned organization state becomes authoritative only after success. This operation grants administrator access; it does not transfer ownership, demote anyone, change the officer-role title, or replace the member's existing account/profile. No demotion or ownership-transfer endpoint is provided.
 
 Years 1–7 map to first/second/third/fourth/fifth-plus/graduate/other; 0 is unset. Keep club IDs as strings and application IDs as real server UUIDs. Unknown facts remain unknown, not mock metadata. Submitted answers enter the answer bank only after explicit consent; USC ID is shared only when a club supplies a reason and the student consents.
 

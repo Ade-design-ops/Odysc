@@ -461,6 +461,15 @@ export async function registerFrontendBackend(
       validated(z.object({ email: emailSchema }).strict(), request.body).email,
     ),
   );
+  app.post<{ Params: { clubId: string } }>(
+    "/api/clubs/:clubId/team/promote",
+    secured,
+    async (request) => store.promoteMember(
+      await actor(request),
+      validated(idSchema, request.params.clubId),
+      validated(z.object({ email: emailSchema }).strict(), request.body).email,
+    ),
+  );
   app.delete<{
     Params: {
       clubId: string;

@@ -50,6 +50,7 @@ All browser requests include `credentials:'include'`. Private requests also send
 | `POST /api/organizer/request` | `{clubId,officerRole}` → pending officer context; no self-approval |
 | `POST /api/clubs/:clubId/team/invite` | Administrator only; `{email,name,officerRole}` → organization state |
 | `POST /api/clubs/:clubId/team/approve` | Administrator only; `{email}` → organization state |
+| `POST /api/clubs/:clubId/team/promote` | Active administrator only; `{email}` → organization state; promotes an active, linked same-club member with a current confirmed USC email |
 | `DELETE /api/clubs/:clubId/team/:email` | Administrator only; cannot remove self or the final active administrator |
 | `PATCH /api/clubs/:clubId/settings` | Administrator only; validated settings → organization state |
 | `POST /api/applications/:id/review` | Active reviewer; `{scores}` → organization state; each score 1–5 |
@@ -59,6 +60,8 @@ All browser requests include `credentials:'include'`. Private requests also send
 | `POST /api/interviews/:id/book` | Application owner; `{slot:string|null}` → workspace; rejects unavailable or conflicting times |
 
 Profile years map 1–7 to first/second/third/fourth/fifth-plus/graduate/other; 0 means unset. Match scores are normalized from the native backend's 0–100 to the frontend's 0–1. Actual club IDs are strings throughout. Application IDs are real UUIDs, exposed in `workspace.applicationIds[clubId]`; client-created `me_<clubId>` IDs have no authority.
+
+Invitations initially grant reviewer access regardless of the officer-role title. Administrator promotion is a separate authorized operation: the server checks current administrator access, then verifies that the target membership is active, linked to a real account, and still matches that account's confirmed USC email. Missing targets return 404; pending, unclaimed, or otherwise ineligible targets return `409 MEMBER_NOT_ELIGIBLE`. An eligible existing administrator remains unchanged on repeat promotion. Success returns the full current organization state; failure must not update client privileges optimistically. Promotion preserves the existing officer-role label, account and student profile. It neither transfers ownership nor demotes/removes other administrators; there is no ownership-transfer or demotion endpoint.
 
 Workspace application statuses, remembered answers, teams, and reviews are server-derived and cannot be patched through personal state. Workspace updates lock the row and can check `expectedVersion` to reject cross-tab lost updates. Independent profile-extra saves merge under that lock without bumping the personal-workspace revision.
 

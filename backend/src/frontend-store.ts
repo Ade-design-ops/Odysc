@@ -971,6 +971,40 @@ export class FrontendStore {
       );
     });
   }
+  promoteMember(actor: Actor, clubId: string, email: string) {
+    return this.actor(actor, async (q) => {
+      await this.lockClub(q, clubId);
+      await this.member(q, actor, clubId, true);
+      const target = (
+        await q.query<MembershipRow>(
+          `SELECT ${membershipColumns} FROM public.odysc_club_memberships WHERE club_id=$1::bigint AND email=$2 FOR UPDATE`,
+          [clubId, email],
+        )
+      ).rows[0];
+      if (!target) throw notFound();
+      const ineligible = () => new HttpError(
+        409,
+        "Only active members with a matching confirmed USC account can become administrators.",
+        "MEMBER_NOT_ELIGIBLE",
+      );
+      if (target.status !== "active" || !target.user_id) throw ineligible();
+      const account = await q.query(
+        "SELECT id FROM auth.users WHERE id=$1::uuid AND lower(email)=lower($2::text) AND email ~* '^[^@[:space:]]+@usc[.]edu$' AND email_confirmed_at IS NOT NULL FOR SHARE",
+        [target.user_id, target.email],
+      );
+      if (!account.rows.length) throw ineligible();
+      if (target.access !== "admin")
+        await q.query(
+          "UPDATE public.odysc_club_memberships SET access='admin',updated_at=now() WHERE id=$1::uuid",
+          [target.id],
+        );
+      return this.organization(
+        q,
+        actor,
+        await this.member(q, actor, clubId, true),
+      );
+    });
+  }
   removeMember(actor: Actor, clubId: string, email: string) {
     return this.actor(actor, async (q) => {
       await this.lockClub(q, clubId);

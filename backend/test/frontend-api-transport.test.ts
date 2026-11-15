@@ -94,6 +94,25 @@ test('organization writes identify resources but leave actor and permissions to 
   assert.equal(calls[2]!.options.method, 'DELETE');
 });
 
+test('member promotion encodes the club path and sends only the trimmed target email with the actor guard', async t => {
+  const organization = { teams: { '36288': [{ email: 'reviewer@usc.edu', access: 'admin', status: 'active' }] }, myMembership: { access: 'admin', status: 'active' } };
+  const calls = fixture(t, () => Response.json(organization));
+  const actor = '11111111-1111-4111-8111-111111111111';
+  setApiActor(actor);
+  assert.deepEqual(await api.promoteMember('club/id ?#', ' reviewer@usc.edu '), organization);
+  assert.equal(calls[0]!.url, '/api/clubs/club%2Fid%20%3F%23/team/promote');
+  assert.equal(calls[0]!.options.method, 'POST');
+  assert.deepEqual(body(calls[0]!), { email: 'reviewer@usc.edu' });
+  assert.equal(new Headers(calls[0]!.options.headers).get('content-type'), 'application/json');
+  assert.equal(new Headers(calls[0]!.options.headers).get('x-odysc-actor'), actor);
+});
+
+test('member promotion authorization failures reject instead of fabricating administrator access', async t => {
+  fixture(t, () => Response.json({ error: { code: 'ORGANIZER_ACCESS_REQUIRED', message: 'An active club administrator is required.' } }, { status: 403 }));
+  setApiActor('11111111-1111-4111-8111-111111111111');
+  await assert.rejects(api.promoteMember('36288', 'reviewer@usc.edu'), error => error instanceof ApiError && error.status === 403 && error.code === 'ORGANIZER_ACCESS_REQUIRED');
+});
+
 test('private requests pin the expected tab actor without attaching identity hints to public auth', async t => {
   const calls = fixture(t);
   const actor = '11111111-1111-4111-8111-111111111111';
