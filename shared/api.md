@@ -14,7 +14,7 @@ All browser requests send `credentials:'include'`. Private requests also send `X
 | `POST /api/me/complete` | `{}` → student; validates name, year, major, interests |
 | `GET /api/workspace`, `PATCH /api/workspace` | Personal workspace; updates may include `expectedVersion` |
 | `GET /api/clubs` | Real directory/settings `Club[]` |
-| `GET /api/events`, `POST /api/events` | Actual club events; creation requires club administrator |
+| `GET /api/events`, `POST /api/events` | Actual club events; creation requires an active club administrator and returns 201. Browser writes include `X-Odysc-Actor`. |
 | `POST /api/ai/match` | Own optional `{studentId}` → `Match[]`, scores 0–1; another identity is rejected |
 | `POST /api/ai/parse-resume` | Actual multipart PDF in field `resume` → suggestions, resume metadata, `needsReview:true` |
 | `GET /api/me/resume` | Own private PDF binary |
@@ -32,3 +32,5 @@ Years 1–7 map to first/second/third/fourth/fifth-plus/graduate/other; 0 is uns
 The eight shared workflow tables are applied. Browser clients have no Data API grants to them; the backend verifies Auth identity and ownership/club permissions in parameterized database transactions. Older native `/api/v1/*` application/organization placeholders still return 503; this browser contract uses the real `/api/*` implementation instead.
 
 No video-provider OAuth, automatic meeting creation, or booking/notification email delivery is claimed. Video offers require a real HTTPS meeting link. Matching may use heuristic fallback, and applicant summaries are source-grounded. Auth inbox delivery/SMTP and deployed callback redirects still require verification. See [frontend integration](../docs/FRONTEND_INTEGRATION.md).
+
+Club administrators publish events from **Club dashboard → Events → Publish event**. The form sends `{clubId,title,kind,start,durationMin,buildingCode,room}`; `start` is an ISO timestamp converted from the device-local date/time shown in the form. Students can find the saved event on the club page and add it to their personal calendar. Personal calendar events remain separate from published club events.

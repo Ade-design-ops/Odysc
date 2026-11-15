@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Applicant, TeamMember } from "../../../shared/types";
 import { api } from "../api";
 import HomeBand from "../components/HomeBand";
+import ClubEvents from "../components/ClubEvents";
 import { Loading, Toast, useToast } from "../components/ui";
 import { OFFICER_ROLES } from "../data/reference";
 import { FormatIcon, InterviewStatus, ScheduleModal } from "../components/Interview";
@@ -15,7 +16,7 @@ import { fmtDate } from "../util";
 
 const CRITERIA = ["Motivation", "Experience", "Community impact"];
 const INJECTION = /(ignore (all |your )?(previous|prior) instructions|rate this applicant|system prompt)/i;
-type Tab = "applicants" | "team" | "settings";
+type Tab = "applicants" | "team" | "events" | "settings";
 const academicYearLabel = (year: number) => year === 5 ? "Fifth year+" : year === 6 ? "Graduate" : year === 7 ? "Other" : year >= 1 && year <= 4 ? `Year ${year}` : "Year not provided";
 
 function Highlight({ text }: { text: string }) {
@@ -85,9 +86,9 @@ export default function OrgDashboard() {
       </HomeBand>
 
       <div className="org-tabs" role="tablist" aria-label="Club dashboard">
-        {(["applicants", "team", ...(isAdmin ? ["settings"] : [])] as Tab[]).map((t) => (
+        {(["applicants", "team", "events", ...(isAdmin ? ["settings"] : [])] as Tab[]).map((t) => (
           <button key={t} role="tab" aria-selected={selectedTab === t} className={selectedTab === t ? "on" : ""} onClick={() => setTab(t)}>
-            {t === "applicants" ? "Applicants" : t === "team" ? "E-board" : "Settings"}
+            {t === "applicants" ? "Applicants" : t === "team" ? "E-board" : t === "events" ? "Events" : "Settings"}
             {t === "team" && waiting > 0 && isAdmin && <span className="badge">{waiting}</span>}
           </button>
         ))}
@@ -95,6 +96,7 @@ export default function OrgDashboard() {
 
       {selectedTab === "applicants" && <Applicants list={all} clubId={clubId} isAdmin={isAdmin} />}
       {selectedTab === "team" && <Team clubId={clubId} isAdmin={isAdmin} />}
+      {selectedTab === "events" && <ClubEvents key={`${clubId}:${account?.email ?? ""}`} clubId={clubId} isAdmin={isAdmin} />}
       {selectedTab === "settings" && isAdmin && <Settings clubId={clubId} />}
     </>
   );

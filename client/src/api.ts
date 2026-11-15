@@ -103,7 +103,8 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const multipart = body instanceof FormData;
-  const publicRequest = ["/session", "/clubs", "/events", "/auth/login", "/auth/register"].includes(path)
+  const publicRequest = (["GET", "HEAD"].includes(method) && ["/session", "/clubs", "/events"].includes(path))
+    || ["/auth/login", "/auth/register"].includes(path)
     || path.startsWith("/v1/auth/");
   const actorId = publicRequest ? null : expectedActor;
   const headers: Record<string, string> = {};
@@ -153,6 +154,7 @@ export const api = {
   saveWorkspace: (patch: WorkspacePatch) => request<WorkspaceState>("/workspace", "PATCH", patch),
   clubs: () => request<Club[]>("/clubs"),
   events: () => request<ClubEvent[]>("/events"),
+  createEvent: (input: Omit<ClubEvent, "id">) => request<ClubEvent>("/events", "POST", input),
   myApplications: () => request<Application[]>("/applications/mine"),
   matches: (_studentId?: string) => request<Match[]>("/ai/match", "POST", {}),
   parseResume: (file: File) => {

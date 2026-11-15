@@ -60,6 +60,7 @@ export interface AppState extends DataState {
   profileSaveError: string | null;
   clubs: Club[];
   events: ClubEvent[];
+  createClubEvent: (input: Omit<ClubEvent, "id" | "clubId">) => Promise<void>;
   matches: Match[];
   profileDone: boolean;
   profileProgress: number;
@@ -114,6 +115,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [clubs, setClubs] = useState<Club[]>([]);
   const [events, setEvents] = useState<ClubEvent[]>([]);
+  const eventsRevision = useRef(0);
   const [allMatches, setAllMatches] = useState<Match[]>([]);
   const profileTimer = useRef<ReturnType<typeof setTimeout>>();
   const draftTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -243,6 +245,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const load = useCallback(async (epoch: number, includeDirectory: boolean) => {
     const startedProfileRevision = profileRevision.current;
     const startedOrganizationRevision = organizationRevision.current;
+    const startedEventsRevision = eventsRevision.current;
     const work: [Promise<SessionState>, Promise<Club[]>, Promise<ClubEvent[]>] = [
       api.session(), includeDirectory ? api.clubs() : Promise.resolve(clubs), includeDirectory ? api.events() : Promise.resolve(events),
     ];
@@ -270,7 +273,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     if (includeDirectory && clubsResult.status === "fulfilled") setClubs(clubsResult.value);
     else if (includeDirectory && clubsResult.status === "rejected") failures.push(errorMessage(clubsResult.reason));
-    if (includeDirectory && eventsResult.status === "fulfilled") setEvents(eventsResult.value);
+    // A directory response started before publication must not erase the new event.
+    if (includeDirectory && eventsResult.status === "fulfilled" && startedEventsRevision === eventsRevision.current) setEvents(eventsResult.value);
     else if (includeDirectory && eventsResult.status === "rejected") failures.push(errorMessage(eventsResult.reason));
     setLoadError(failures[0] ?? null);
     setReady(true);
@@ -485,6 +489,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return clubId;
   }, []);
 
+  const createClubEvent = useCallback((input: Omit<ClubEvent, "id" | "clubId">): Promise<void> => {
+    const epoch = epochRef.current;
+    const actor = actorKey(pRef.current);
+    let clubId: string;
+    const requireAdmin = () => {
+      const account = pRef.current.account;
+      const membership = organizationRef.current.myMembership;
+      const currentClub = requireOfficerClub();
+      if (membership?.status !== "active" || membership.access !== "admin"
+        || membership.email.toLowerCase() !== account?.email.toLowerCase()) {
+        throw new ApiError("An approved club administrator is required to publish an event.", 403, "ORGANIZER_ACCESS_REQUIRED", actor || undefined);
+      }
+      return currentClub;
+    };
+    try { clubId = requireAdmin(); }
+    catch (error) { return observed(Promise.reject(error)); }
+    const payload = { ...input, clubId };
+    const task = organizationChain.current.catch(() => undefined).then(async () => {
+      if (!sameActor(epoch, actor) || requireAdmin() !== clubId) {
+        throw new ApiError("Your session changed. Sign in again before publishing.", 409, "SESSION_CHANGED", actor || undefined);
+      }
+      const event = await api.createEvent(payload);
+      if (!sameActor(epoch, actor)) {
+        throw new ApiError("Your session changed. Refresh to see the published event.", 409, "SESSION_CHANGED", actor || undefined);
+      }
+      eventsRevision.current += 1;
+      setEvents((current) => [...current.filter((entry) => entry.id !== event.id), event]);
+    });
+    organizationChain.current = task;
+    return observed(task);
+  }, [observed, requireOfficerClub, sameActor]);
+
   const profileDone = completeBasics(p.profile);
   const requiredProgress = [!!p.profile.name.trim() && !!p.profile.email, !!p.profile.major.trim(), p.profile.year > 0, p.profile.interests.some((interest) => interest.trim())].filter(Boolean).length / 4;
   const mergedClubs = useMemo(() => clubs.map((club) => ({ ...club, ...p.clubSettings[club.id] })), [clubs, p.clubSettings]);
@@ -493,7 +529,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ...p, ready, loadError, mutationError,
     clearMutationError: () => setMutationError(null),
     saveStatus, profileSaveError,
-    clubs: mergedClubs, events, matches: profileDone ? allMatches : [], profileDone, profileProgress: requiredProgress,
+    clubs: mergedClubs, events, createClubEvent, matches: profileDone ? allMatches : [], profileDone, profileProgress: requiredProgress,
     clubById: (id) => mergedClubs.find((club) => club.id === id),
     applicationIdForClub: (id) => p.applicationIds[id],
     updateProfile, flushProfile, refresh, signIn, signOut,

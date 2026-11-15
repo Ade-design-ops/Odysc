@@ -215,7 +215,8 @@ export async function registerFrontendBackend(
     return clubs.map((club) => frontendClub(club, settings[club.id]));
   });
   app.get("/api/events", secured, async () => store.events());
-  app.post("/api/events", secured, async (request) => {
+  app.post("/api/events", secured, async (request, reply) => {
+    const identity = await actor(request);
     const body = validated(
       z
         .object({
@@ -224,13 +225,14 @@ export async function registerFrontendBackend(
           kind: z.enum(["Info session", "Mixer", "Workshop", "Coffee chat"]),
           start: z.string().datetime({ offset: true }),
           durationMin: z.number().int().min(5).max(1440),
-          buildingCode: z.string().min(1).max(30),
-          room: z.string().min(1).max(100),
+          buildingCode: z.string().trim().min(1).max(30),
+          room: z.string().trim().min(1).max(100),
         })
         .strict(),
       request.body,
     );
-    return store.createEvent(await actor(request), body);
+    const event = await store.createEvent(identity, body);
+    return reply.code(201).send(event);
   });
   app.post("/api/ai/match", { ...secured, ...limited }, async (request) => {
     const identity = await actor(request);

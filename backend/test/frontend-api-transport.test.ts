@@ -117,3 +117,24 @@ test('session-change failures retain only the request actor so late responses ca
   setApiActor('11111111-1111-4111-8111-111111111111');
   await assert.rejects(api.saveProfile({ major: 'Computer Science' }), error => error instanceof ApiError && error.code === 'SESSION_CHANGED' && error.actorId === '11111111-1111-4111-8111-111111111111');
 });
+
+test('event publication posts the real event with the expected actor while event reads remain public', async t => {
+  const input = {
+    clubId: '36288', title: 'NSBE info session', kind: 'Info session' as const,
+    start: '2026-11-15T02:00:00.000Z', durationMin: 60, buildingCode: 'SAL', room: '101',
+  };
+  const persisted = { ...input, id: 'server-event-id' };
+  const calls = fixture(t, request => Response.json(request.options.method === 'POST' ? persisted : [persisted]));
+  const actor = '11111111-1111-4111-8111-111111111111';
+  setApiActor(actor);
+  assert.deepEqual(await api.createEvent(input), persisted);
+  assert.equal(calls[0]!.url, '/api/events');
+  assert.equal(calls[0]!.options.method, 'POST');
+  assert.deepEqual(body(calls[0]!), input);
+  assert.equal(new Headers(calls[0]!.options.headers).get('content-type'), 'application/json');
+  assert.equal(new Headers(calls[0]!.options.headers).get('x-odysc-actor'), actor);
+  assert.deepEqual(await api.events(), [persisted]);
+  assert.equal(calls[1]!.url, '/api/events');
+  assert.equal(calls[1]!.options.method, 'GET');
+  assert.equal(new Headers(calls[1]!.options.headers).has('x-odysc-actor'), false);
+});

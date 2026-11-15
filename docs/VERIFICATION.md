@@ -4,12 +4,12 @@ The working copy is the original `Odysc` repository. Changes remain uncommitted 
 
 ## Completed checks
 
-- Backend test suite: **131 passed**, none failed or skipped. Includes browser transport, authentication, ownership, PDF handling, application permissions, and interview regressions.
+- Backend test suite: **135 passed**, none failed or skipped. Includes browser transport, authentication, ownership, PDF handling, application permissions, and interview regressions.
 - Backend TypeScript build and frontend production build pass.
 - The frontend stylesheet and shared AuthScene, HomeBand, and photo assets are unchanged from the teammate's frontend commit. The built CSS asset remains `index-DBY9zGoV.css`.
 - Live local HTTP checks passed: anonymous directory/session, confirmed USC login, a single HttpOnly session cookie, application readback, stale-account rejection, missing-actor rejection, unrelated-club denial, and logout.
 - Live Supabase verification passed **20 workflow groups** using actual store SQL. All synthetic Auth users, profiles, memberships, settings, applications, reviews, interviews, and events were rolled back. Run `cd backend` then `npm run workflow:verify` to repeat; it briefly locks the selected club during the transaction.
-- Browser walkthrough passed: student login, profile completion, search across 650 clubs, save NSBE, submit an application, officer login, read that application, save a review score, create a labeled interview offer, student booking, personal calendar save, and persistence after reload.
+- Browser walkthrough passed: student login, profile completion, search across 650 clubs, save NSBE, submit an application, officer login, read that application, save a review score, create a labeled interview offer, student booking, personal calendar save, and persistence after reload. The additional event-publishing walkthrough passed admin form validation, publishing a labeled disposable info session, student club-page visibility, and adding/removing that event from the student calendar.
 
 The existing demo account has one NSBE test application/interview and a clearly labeled personal calendar test entry from the browser walkthrough. The interview note explicitly says it is an integration test and no real meeting is scheduled. No notification email or external meeting was created.
 

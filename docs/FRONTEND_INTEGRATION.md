@@ -32,7 +32,7 @@ Open [http://localhost:5173](http://localhost:5173). Vite forwards `/api` to `ht
 | Workspace | Persisted club list, drafts, in-app reminder preferences, personal calendar entries/colors/visibility, and server-derived application state |
 | Applications | Reviewed snapshots, deadline/question validation, duplicate prevention, optional USC ID sharing and explicit answer memory |
 | Officers | Pending membership requests, active-member review access, administrator team/settings/decision actions, and source-grounded applicant summaries |
-| Interviews/events | Persisted offers, real meeting/location details, student booking, and authorized club event endpoints |
+| Interviews/events | Persisted offers, real meeting/location details, student booking, and an Events dashboard tab where club administrators publish info sessions, mixers, workshops, and coffee chats |
 
 Eight workflow tables are applied in Supabase. They are server-only with RLS enabled and no browser Data API grants. Backend transactions verify the current confirmed USC identity and enforce actor ownership or active club membership/admin access. Existing `student_profiles` ownership/USC policies remain intact. An explicitly authorized initial administrator was linked to NSBE club `36288`; other clubs are not automatically assigned to new users.
 
