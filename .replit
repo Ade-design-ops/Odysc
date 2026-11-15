@@ -1,0 +1,6 @@
+run = "cd client && npm install && npm run dev"
+entrypoint = "client/src/App.tsx"
+
+[[ports]]
+localPort = 5173
+externalPort = 80
