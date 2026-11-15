@@ -2,18 +2,16 @@
 // Recommendations only appear once the profile is done (they're earned, not dumped on you).
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import type { Category } from "../../../shared/types";
 import { AddButton, DuePill, Loading, MatchMeter, Monogram } from "../components/ui";
 import { PHOTOS } from "../photos";
 import { useApp } from "../store";
 
-const CATS: (Category | "All")[] = ["All", "Engineering", "Tech", "Business", "Service", "Culture", "Arts"];
-
 export default function Search() {
   const { ready, clubs, matches, profileDone, clubById } = useApp();
   const [q, setQ] = useState("");
-  const [cat, setCat] = useState<(typeof CATS)[number]>("All");
+  const [cat, setCat] = useState<string>("All");
   const [openOnly, setOpenOnly] = useState(false);
+  const categories = useMemo(() => ["All", ...[...new Set(clubs.map(club => club.category).filter(Boolean))].sort()], [clubs]);
 
   const results = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -25,7 +23,10 @@ export default function Search() {
   }, [clubs, q, cat, openOnly]);
 
   if (!ready) return <Loading />;
-  const recs = [...matches].sort((a, b) => b.score - a.score).slice(0, 3);
+  const recs = matches
+    .filter((match) => Number.isFinite(match.score) && match.score > 0 && clubById(match.clubId))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
   const browsing = !q && cat === "All" && !openOnly;
   const scoreOf = (id: string) => matches.find((m) => m.clubId === id)?.score;
 
@@ -36,7 +37,7 @@ export default function Search() {
         <div className="banner-shade" />
         <div className="banner-copy">
           <h1>Club Search</h1>
-          <p>{clubs.length} clubs taking members this semester</p>
+          <p>{clubs.length} USC clubs to explore</p>
         </div>
       </section>
 
@@ -52,7 +53,7 @@ export default function Search() {
         />
       </div>
       <div className="row wrap" style={{ gap: 6, margin: "12px 0 0" }} role="group" aria-label="Filter by category">
-        {CATS.map((c) => (
+        {categories.map((c) => (
           <button key={c} className={`filter ${cat === c ? "on" : ""}`} onClick={() => setCat(c)} aria-pressed={cat === c}>{c}</button>
         ))}
         <span style={{ flex: 1 }} />
@@ -63,7 +64,7 @@ export default function Search() {
       </div>
 
       {browsing && (
-        profileDone ? (
+        profileDone ? recs.length > 0 ? (
           <section className="section reveal">
             <div className="section-head">
               <h2 className="h3">Recommended for you</h2>
@@ -87,7 +88,7 @@ export default function Search() {
               })}
             </div>
           </section>
-        ) : (
+        ) : null : (
           <Link to="/profile" className="hint-bar">
             Complete your profile to see clubs that match it.
           </Link>
@@ -109,7 +110,7 @@ export default function Search() {
                   <Monogram club={c} size="sm" />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="row-title">{c.name}</div>
-                    <div className="subtle">{c.category} · {c.hoursPerWeek} · {c.selectivity === "Open" ? "Open to all" : "Selective"}</div>
+                    <div className="subtle">{c.category} · {c.hoursPerWeek} · {c.selectivity === "Open" ? "Open to all" : c.selectivity === "Selective" ? "Selective" : "Membership details not posted"}</div>
                   </div>
                   {score !== undefined && score >= 0.7 && <span className="pill hide-sm">{Math.round(score * 100)}% match</span>}
                   <span className="hide-sm"><DuePill iso={c.deadline} /></span>

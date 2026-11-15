@@ -1,21 +1,22 @@
-// Club side. Officers only get in once verified: their email is on the club's officer
-// roster from Campus Activities, or a club admin approves them. Inside, the e-board reviews
+// Club access comes from active server-side membership approved by a club admin.
+// Inside, the e-board reviews
 // together: everyone scores on the same rubric, OdySC averages the scores and flags a
 // reviewer who grades far off from the rest. Admins invite reviewers, decide, and choose
 // whether the club needs USC IDs (students must agree before theirs is shared).
 import { useEffect, useMemo, useState } from "react";
-import type { Applicant, Club, TeamMember } from "../../../shared/types";
+import type { Applicant, TeamMember } from "../../../shared/types";
 import { api } from "../api";
 import HomeBand from "../components/HomeBand";
 import { Loading, Toast, useToast } from "../components/ui";
-import { OFFICER_ROLES } from "../data/mock";
+import { OFFICER_ROLES } from "../data/reference";
 import { FormatIcon, InterviewStatus, ScheduleModal } from "../components/Interview";
-import { VERIFY_OFFICERS, myAppId, useApp, type Decision } from "../store";
+import { useApp, type Decision } from "../store";
 import { fmtDate } from "../util";
 
 const CRITERIA = ["Motivation", "Experience", "Community impact"];
 const INJECTION = /(ignore (all |your )?(previous|prior) instructions|rate this applicant|system prompt)/i;
 type Tab = "applicants" | "team" | "settings";
+const academicYearLabel = (year: number) => year === 5 ? "Fifth year+" : year === 6 ? "Graduate" : year === 7 ? "Other" : year >= 1 && year <= 4 ? `Year ${year}` : "Year not provided";
 
 function Highlight({ text }: { text: string }) {
   const m = text.match(/[^.]*(ignore (all |your )?(previous|prior) instructions|rate this applicant)[^.]*\.?/i);
@@ -35,22 +36,36 @@ const total = (s?: Record<string, number>) => (s ? avg(CRITERIA.map((c) => s[c])
 export default function OrgDashboard() {
   const s = useApp();
   const { ready, clubById, account, myMembership, teams } = s;
-  const clubId = account?.clubId ?? "nsbe";
+  const clubId = account?.clubId ?? "";
   const club = clubById(clubId);
   const [list, setList] = useState<Applicant[] | null>(null);
+  const [loadedFor, setLoadedFor] = useState("");
   const [tab, setTab] = useState<Tab>("applicants");
+  const [loadError, setLoadError] = useState("");
+  const [reload, setReload] = useState(0);
+  const accessKey = `${account?.email ?? ""}:${clubId}:${myMembership?.status ?? ""}`;
 
   useEffect(() => {
-    api.applicants(clubId).then(setList);
-  }, [clubId]);
+    let active = true;
+    setList(null);
+    setLoadedFor("");
+    setLoadError("");
+    if (ready && account?.role === "officer" && clubId && myMembership?.status === "active") {
+      api.applicants(clubId).then((applicants) => { if (active) { setList(applicants); setLoadedFor(accessKey); } })
+        .catch((failure: unknown) => { if (active) setLoadError(failure instanceof Error ? failure.message : "Applications could not be loaded."); });
+    }
+    return () => { active = false; };
+  }, [ready, account?.role, clubId, myMembership?.status, accessKey, reload]);
 
-  if (!ready || !club) return <Loading />;
-  if (VERIFY_OFFICERS && (!myMembership || myMembership.status !== "active")) return <Pending clubName={club.name} admins={(teams[clubId] ?? []).filter((m) => m.access === "admin" && m.status === "active")} />;
-  if (!list) return <Loading />;
-  const mine = ownApplication(clubId, club, s);
-  const all = mine ? [mine, ...list] : list;
+  if (!ready) return <Loading />;
+  if (!clubId || !club) return <div className="card"><h1 className="h2">Club access is not available</h1><p className="subtle">Your account does not have a club workspace available. Ask a club admin or the project operator to check your membership.</p></div>;
+  if (!myMembership || myMembership.status !== "active") return <Pending clubName={club.name} admins={(teams[clubId] ?? []).filter((m) => m.access === "admin" && m.status === "active")} />;
+  if (loadError) return <div className="card"><p className="field-error" role="alert">{loadError}</p><button className="btn primary" onClick={() => setReload((value) => value + 1)}>Try again</button></div>;
+  if (!list || loadedFor !== accessKey) return <Loading />;
+  const all = list;
 
-  const isAdmin = !VERIFY_OFFICERS || myMembership?.access === "admin";
+  const isAdmin = myMembership.access === "admin";
+  const selectedTab = tab === "settings" && !isAdmin ? "applicants" : tab;
   const team = teams[clubId] ?? [];
   const waiting = team.filter((m) => m.status === "pending").length;
   const first = (account?.name ?? "").split(" ")[0];
@@ -60,7 +75,7 @@ export default function OrgDashboard() {
       <HomeBand
         kicker={`${club.shortName} · ${myMembership?.officerRole ?? account?.officerRole ?? "Officer"}`}
         title={<>Hey {first}, <em>{all.length} applicants</em> are waiting on your e-board.</>}
-        sub={`Fall recruiting · ${team.filter((m) => m.status === "active").length} reviewers · ${isAdmin ? "You're an admin" : "You can score applicants"}`}
+        sub={`Recruiting · ${team.filter((m) => m.status === "active").length} reviewers · ${isAdmin ? "You're an admin" : "You can score applicants"}`}
       >
         <div className="stat-chips">
           <StatChip n={all.length} label="Applied" />
@@ -71,49 +86,18 @@ export default function OrgDashboard() {
 
       <div className="org-tabs" role="tablist" aria-label="Club dashboard">
         {(["applicants", "team", ...(isAdmin ? ["settings"] : [])] as Tab[]).map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
+          <button key={t} role="tab" aria-selected={selectedTab === t} className={selectedTab === t ? "on" : ""} onClick={() => setTab(t)}>
             {t === "applicants" ? "Applicants" : t === "team" ? "E-board" : "Settings"}
             {t === "team" && waiting > 0 && isAdmin && <span className="badge">{waiting}</span>}
           </button>
         ))}
       </div>
 
-      {tab === "applicants" && <Applicants list={all} clubId={clubId} isAdmin={isAdmin} />}
-      {tab === "team" && <Team clubId={clubId} isAdmin={isAdmin} />}
-      {tab === "settings" && isAdmin && <Settings clubId={clubId} />}
+      {selectedTab === "applicants" && <Applicants list={all} clubId={clubId} isAdmin={isAdmin} />}
+      {selectedTab === "team" && <Team clubId={clubId} isAdmin={isAdmin} />}
+      {selectedTab === "settings" && isAdmin && <Settings clubId={clubId} />}
     </>
   );
-}
-
-/** The student signed in on this browser applied to this club: show their real application. */
-function ownApplication(clubId: string, club: Club, s: ReturnType<typeof useApp>): Applicant | null {
-  const app = s.apps[clubId];
-  if (!app || app.status === "draft" || !s.profile.name) return null;
-  const p = s.profile;
-  const draft = s.drafts[clubId] ?? {};
-  const first = p.preferredName || p.name.split(" ")[0];
-  return {
-    applicationId: myAppId(clubId),
-    name: p.name,
-    preferredName: p.preferredName,
-    email: p.email,
-    verifiedStudent: true,
-    pronouns: p.pronouns,
-    major: p.major,
-    year: p.year,
-    gradTerm: p.gradTerm,
-    skills: p.skills,
-    interests: p.interests,
-    experiences: p.experiences.filter((e) => e.trim()),
-    submittedAt: app.submittedAt,
-    uscId: club.requiresUscId && app.sharedUscId ? p.uscId : undefined,
-    answers: club.questions.map((q) => ({ prompt: q.prompt, text: (draft[q.id] ?? "").trim() })),
-    summary: {
-      summary: `${first} is a ${p.major || "USC"} student${p.skills.length ? ` with ${p.skills.slice(0, 3).join(", ")}` : ""}. Answered all ${club.questions.length} questions.`,
-      evidence: [p.experiences.find((e) => e.trim())?.slice(0, 60), p.interests[0] && `Interested in ${p.interests[0]}`].filter((x): x is string => !!x),
-      injectionFlag: false,
-    },
-  } as Applicant;
 }
 
 function StatChip({ n, label }: { n: number | string; label: string }) {
@@ -134,6 +118,8 @@ function ScoredChip({ list }: { list: Applicant[] }) {
 /* ---------- not verified yet ---------- */
 function Pending({ clubName, admins }: { clubName: string; admins: TeamMember[] }) {
   const { account, signOut } = useApp();
+  const [error, setError] = useState("");
+  const [leaving, setLeaving] = useState(false);
   return (
     <div className="pending-wrap">
       <div className="card pending-card">
@@ -142,16 +128,21 @@ function Pending({ clubName, admins }: { clubName: string; admins: TeamMember[] 
         </div>
         <h1 className="h2">You're on the waitlist for {clubName}</h1>
         <p className="subtle">
-          We couldn't find <strong>{account?.email}</strong> on {clubName}'s officer list from Campus Activities, so a club admin
-          has to confirm you're on the e-board. Until then you can't see applicants. That keeps anyone from claiming a board seat.
+          The access request for <strong>{account?.email}</strong> needs approval from a club admin. Until your membership is active,
+          you can't see applicants. Confirming a USC email does not grant club permissions.
         </p>
         <ol className="pending-steps">
           <li className="done">Account created</li>
           <li className="now">Waiting for a {clubName} admin{admins.length ? ` (${admins.map((a) => a.name).join(" or ")})` : ""} to approve you</li>
           <li>Review applicants with your e-board</li>
         </ol>
-        <p className="subtle" style={{ fontSize: 14 }}>Faster: ask your president to invite this email from their E-board tab, or update your club's officer list on EngageSC.</p>
-        <button className="btn" onClick={signOut}>Sign out</button>
+        <p className="subtle" style={{ fontSize: 14 }}>Ask an existing club admin to approve your request. If your club has no admin yet, contact the project operator to set up its first admin.</p>
+        {error && <p className="field-error" role="alert">{error}</p>}
+        <button className="btn" disabled={leaving} onClick={async () => {
+          setLeaving(true);
+          try { await signOut(); } catch (failure) { setError(failure instanceof Error ? failure.message : "Sign-out could not be completed."); }
+          finally { setLeaving(false); }
+        }}>{leaving ? "Signing out…" : "Sign out"}</button>
       </div>
     </div>
   );
@@ -164,6 +155,8 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
   const club = clubById(clubId)!;
   const [sel, setSel] = useState(0);
   const [blind, setBlind] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const toast = useToast();
   const me = account?.email ?? "";
   const team = teams[clubId] ?? [];
@@ -181,8 +174,10 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
     return out;
   }, [list, scores]);
 
-  const a = list[sel];
-  const flagged = a.summary.injectionFlag || a.answers.some((x) => INJECTION.test(x.text));
+  const activeIndex = Math.min(sel, Math.max(0, list.length - 1));
+  const a = list[activeIndex];
+  if (!a) return <div className="card"><h2 className="h3">No applications yet</h2><p className="subtle">Submitted applications will appear here. Your club's reviewers can score them once they arrive.</p></div>;
+  const flagged = a.summary?.injectionFlag || a.answers.some((x) => INJECTION.test(x.text));
   const mine = scores[a.applicationId]?.[me] ?? {};
   const all = Object.entries(scores[a.applicationId] ?? {}).filter(([, s]) => total(s) > 0);
   const label = (x: Applicant, i: number) => (blind ? `Applicant ${i + 1}` : x.preferredName ? `${x.preferredName} ${x.name.split(" ").slice(-1)[0]}` : x.name);
@@ -190,13 +185,19 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
 
   const iv = interviews[a.applicationId];
   const decision = decisions[a.applicationId];
-  const doDecide = (d: Decision) => {
-    decide(a.applicationId, d);
-    toast.show(d === "accept" ? `${label(a, sel)} is in. They'll see it in OdySC and get an email.` : d === "advance" ? `${label(a, sel)} moved to interviews.` : `Declined. ${label(a, sel)} gets Free Agent suggestions for similar clubs.`);
+  const run = async (action: () => Promise<void>, notice?: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try { await action(); if (notice) toast.show(notice); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : "The change could not be saved."); }
+    finally { setBusy(false); }
   };
+  const doDecide = (d: Decision) => run(() => decide(a.applicationId, d), d === "accept" ? `${label(a, activeIndex)} was accepted in OdySC.` : d === "advance" ? `${label(a, activeIndex)} moved to interviews.` : "Application declined in OdySC.");
 
   return (
     <>
+      {error && <p className="field-error" role="alert">{error}</p>}
       <div className="row between wrap" style={{ marginBottom: 14, gap: 12 }}>
         <p className="subtle" style={{ margin: 0 }}>{Object.keys(decisions).filter((k) => list.some((x) => x.applicationId === k)).length} of {list.length} decided</p>
         <label className="toggle" title="Hide names, emails and majors while you score">
@@ -211,13 +212,13 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
             const scoredIt = CRITERIA.every((c) => scores[x.applicationId]?.[me]?.[c]);
             const t = scoredIt ? avg(Object.values(scores[x.applicationId] ?? {}).map(total).filter(Boolean)) : 0;
             return (
-              <button key={x.applicationId} className={`applicant ${i === sel ? "active" : ""}`} onClick={() => setSel(i)}>
+              <button key={x.applicationId} className={`applicant ${i === activeIndex ? "active" : ""}`} onClick={() => setSel(i)}>
                 <div className="row between">
                   <span style={{ fontWeight: 600 }}>{label(x, i)}</span>
                   {d ? <span className={`pill ${d === "decline" ? "" : d === "accept" ? "ok" : "gold"}`}>{d === "accept" ? "Accepted" : d === "decline" ? "Declined" : interviews[x.applicationId]?.booked ? "Booked" : "Interview"}</span>
-                    : x.summary.injectionFlag ? <span className="pill cardinal">Flag</span> : null}
+                    : x.summary?.injectionFlag ? <span className="pill cardinal">Flag</span> : null}
                 </div>
-                <div className="subtle">{blind ? `Year ${x.year}` : `${x.major} · Year ${x.year}`}{t ? ` · ${t.toFixed(1)} avg` : ""}</div>
+                <div className="subtle">{blind ? academicYearLabel(x.year) : `${x.major} · ${academicYearLabel(x.year)}`}{t ? ` · ${t.toFixed(1)} avg` : ""}</div>
               </button>
             );
           })}
@@ -227,20 +228,20 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
           <div className="card">
             <div className="row between wrap" style={{ gap: 10 }}>
               <div>
-                <h2 className="h3" style={{ margin: 0 }}>{label(a, sel)}</h2>
-                {!blind && <p className="subtle" style={{ margin: "4px 0 0" }}>{[a.pronouns, a.major, `Year ${a.year}`, a.gradTerm && `Graduates ${a.gradTerm}`].filter(Boolean).join(" · ")}</p>}
+                <h2 className="h3" style={{ margin: 0 }}>{label(a, activeIndex)}</h2>
+                {!blind && <p className="subtle" style={{ margin: "4px 0 0" }}>{[a.pronouns, a.major, academicYearLabel(a.year), a.gradTerm && `Graduates ${a.gradTerm}`].filter(Boolean).join(" · ")}</p>}
               </div>
-              {a.verifiedStudent && <span className="pill ok">Verified USC student</span>}
+              {a.verifiedUscEmail && <span className="pill ok">USC email confirmed</span>}
             </div>
 
             {blind ? (
-              <p className="subtle" style={{ margin: "10px 0 0" }}>Name, email and major are hidden while blind review is on.</p>
+              <p className="subtle" style={{ margin: "10px 0 0" }}>Identity fields are hidden. Written answers may still include identifying details.</p>
             ) : (
               <dl className="kv">
                 {a.preferredName && <><dt>Goes by</dt><dd>{a.preferredName}</dd></>}
                 <dt>Email</dt><dd><a className="text-link" href={`mailto:${a.email}`}>{a.email}</a></dd>
                 {a.submittedAt && <><dt>Applied</dt><dd>{fmtDate(a.submittedAt)}</dd></>}
-                {club.requiresUscId && <><dt>USC ID</dt><dd>{a.uscId ?? <span className="subtle">Not shared (applied before you required it)</span>}</dd></>}
+                {club.requiresUscId && <><dt>USC ID</dt><dd>{a.uscId ?? <span className="subtle">Not shared by this applicant</span>}</dd></>}
               </dl>
             )}
 
@@ -260,18 +261,18 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
             {flagged && (
               <div className="alert danger" style={{ marginTop: 14 }} role="alert">
                 <strong>Possible prompt injection.</strong> This application contains text that tries to instruct the AI reviewer.
-                OdySC ignored it, and the summary below uses only the applicant's actual answers. It's highlighted below.
+                Review the highlighted text and compare the summary with the submitted answers.
               </div>
             )}
 
             <div className="ai-box">
               <div className="row between">
-                <span style={{ fontWeight: 600, fontSize: 14 }}>AI summary</span>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>Application summary</span>
                 <span className="subtle">Suggests · never decides</span>
               </div>
-              <p style={{ margin: "6px 0 10px", fontSize: 14 }}>{a.summary.summary}</p>
+              <p style={{ margin: "6px 0 10px", fontSize: 14 }}>{a.summary?.summary || "A summary is not available. Review the submitted answers below."}</p>
               <div className="row wrap" style={{ gap: 6 }}>
-                {a.summary.evidence.map((e) => <span key={e} className="chip">Evidence: {e}</span>)}
+                {(a.summary?.evidence ?? []).map((e) => <span key={e} className="chip">Evidence: {e}</span>)}
               </div>
             </div>
           </div>
@@ -296,7 +297,7 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
                 <span style={{ fontSize: 14 }}>{c}</span>
                 <div className="rubric" role="radiogroup" aria-label={c}>
                   {[1, 2, 3, 4, 5].map((n) => (
-                    <button key={n} role="radio" aria-checked={mine[c] === n} className={mine[c] === n ? "on" : ""} onClick={() => setScore(a.applicationId, c, n)}>{n}</button>
+                    <button key={n} role="radio" aria-checked={mine[c] === n} className={mine[c] === n ? "on" : ""} disabled={busy} onClick={() => { void run(() => setScore(a.applicationId, c, n)); }}>{n}</button>
                   ))}
                 </div>
               </div>
@@ -329,25 +330,25 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
                 </div>
               );
             })}
-            {iv && <InterviewStatus iv={iv} name={blind ? "the applicant" : a.preferredName || a.name} onEdit={() => setScheduling(true)} />}
+            {iv && <InterviewStatus iv={iv} name={blind ? "the applicant" : a.preferredName || a.name} onEdit={isAdmin ? () => setScheduling(true) : undefined} />}
             <div className="decide-row">
               {isAdmin ? (
                 <>
                   {decision === "accept" || decision === "decline" ? (
-                    <span className="subtle">{decision === "accept" ? "Accepted." : "Declined."} <button className="link-act" onClick={() => decide(a.applicationId, "advance")}>Undo</button></span>
+                    <span className="subtle">{decision === "accept" ? "Accepted." : "Declined."} <button className="link-act" disabled={busy} onClick={() => { void doDecide("advance"); }}>Undo</button></span>
                   ) : iv ? (
                     <>
-                      <button className="btn primary" onClick={() => doDecide("accept")}>Accept</button>
-                      <button className="btn" onClick={() => doDecide("decline")}>Decline</button>
+                      <button className="btn primary" disabled={busy} onClick={() => { void doDecide("accept"); }}>Accept</button>
+                      <button className="btn" disabled={busy} onClick={() => { void doDecide("decline"); }}>Decline</button>
                     </>
                   ) : (
                     <>
-                      <button className="btn primary" onClick={() => setScheduling(true)}>Invite to interview</button>
-                      <button className="btn" onClick={() => doDecide("accept")}>Accept</button>
-                      <button className="btn" onClick={() => doDecide("decline")}>Decline</button>
+                      <button className="btn primary" disabled={busy} onClick={() => setScheduling(true)}>Invite to interview</button>
+                      <button className="btn" disabled={busy} onClick={() => { void doDecide("accept"); }}>Accept</button>
+                      <button className="btn" disabled={busy} onClick={() => { void doDecide("decline"); }}>Decline</button>
                     </>
                   )}
-                  <span className="subtle" style={{ fontSize: 13, flexBasis: "100%" }}>Declined students get suggestions for similar clubs that are still open.</span>
+                  <span className="subtle" style={{ fontSize: 13, flexBasis: "100%" }}>Decisions are saved in OdySC, where applicants can check their status.</span>
                 </>
               ) : (
                 <span className="subtle">Only club admins can make the final call. Your scores go into the team average.</span>
@@ -356,14 +357,14 @@ function Applicants({ list, clubId, isAdmin }: { list: Applicant[]; clubId: stri
           </div>
         </section>
       </div>
-      {scheduling && (
+      {scheduling && isAdmin && (
         <ScheduleModal
           appId={a.applicationId}
           clubId={clubId}
           name={blind ? "this applicant" : a.preferredName ? `${a.preferredName} ${a.name.split(" ").slice(-1)[0]}` : a.name}
           existing={iv}
           onClose={() => setScheduling(false)}
-          onSent={() => { setScheduling(false); toast.show(`Invite sent. ${blind ? "They" : a.preferredName || a.name.split(" ")[0]} picks a time in OdySC and gets an email.`); }}
+          onSent={() => { setScheduling(false); toast.show("Interview invitation saved. The applicant can choose a time in OdySC."); }}
         />
       )}
       <Toast message={toast.msg} onDone={toast.clear} />
@@ -377,15 +378,34 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
   const team = teams[clubId] ?? [];
   const [f, setF] = useState({ email: "", name: "", role: "Vice President" });
   const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const toast = useToast();
   const pending = team.filter((m) => m.status === "pending");
   const rest = team.filter((m) => m.status !== "pending");
 
-  const invite = (e: React.FormEvent) => {
+  const invite = async (e: React.FormEvent) => {
     e.preventDefault();
-    const r = inviteMember(f.email, f.name, f.role);
-    setErr(r);
-    if (!r) { toast.show(`Invite sent to ${f.email.trim()}. They can review as soon as they sign up.`); setF({ email: "", name: "", role: "Vice President" }); }
+    if (busy) return;
+    if (!/^[^\s@]+@usc\.edu$/i.test(f.email.trim())) return setErr("Use the reviewer's @usc.edu email.");
+    setBusy(true);
+    setErr(null);
+    try {
+      const result = await inviteMember(f.email, f.name, f.role);
+      setErr(result);
+      if (!result) {
+        toast.show(`Invitation recorded for ${f.email.trim()} in OdySC. Share the signup link with them.`);
+        setF({ email: "", name: "", role: "Vice President" });
+      }
+    } catch (failure) { setErr(failure instanceof Error ? failure.message : "The invitation could not be saved."); }
+    finally { setBusy(false); }
+  };
+  const changeMember = async (action: () => Promise<void>, notice: string) => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try { await action(); toast.show(notice); }
+    catch (failure) { setErr(failure instanceof Error ? failure.message : "The membership change could not be saved."); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -394,7 +414,7 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
         {isAdmin && pending.length > 0 && (
           <div className="card pending-list">
             <h2 className="h3">Asking to join</h2>
-            <p className="subtle" style={{ marginTop: 0 }}>These people aren't on your officer list from Campus Activities. Only approve people you know are on your board.</p>
+            <p className="subtle" style={{ marginTop: 0 }}>These accounts requested access to your club. Only approve people you know should review your applicants.</p>
             {pending.map((m) => (
               <div key={m.email} className="member-row">
                 <span className="avatar" aria-hidden="true">{m.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</span>
@@ -403,8 +423,8 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
                   <div className="subtle">Says they're {m.officerRole} · {m.email}</div>
                 </div>
                 <div className="row" style={{ gap: 6 }}>
-                  <button className="btn sm primary" onClick={() => { approveMember(m.email); toast.show(`${m.name} can now review applicants.`); }}>Approve</button>
-                  <button className="btn sm ghost" onClick={() => removeMember(m.email)}>Deny</button>
+                  <button className="btn sm primary" disabled={busy} onClick={() => { void changeMember(() => approveMember(m.email), `${m.name} can now review applicants.`); }}>Approve</button>
+                  <button className="btn sm ghost" disabled={busy} onClick={() => { void changeMember(() => removeMember(m.email), "Access request denied."); }}>Deny</button>
                 </div>
               </div>
             ))}
@@ -421,7 +441,7 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
               </div>
               <div className="row" style={{ gap: 8 }}>
                 {m.status === "invited" ? <span className="pill gold">Invited</span> : <span className={`pill ${m.access === "admin" ? "cardinal" : ""}`}>{m.access === "admin" ? "Admin" : "Reviewer"}</span>}
-                {isAdmin && m.email !== account?.email && <button className="btn sm ghost" onClick={() => removeMember(m.email)} aria-label={`Remove ${m.name}`}>Remove</button>}
+                {isAdmin && m.email !== account?.email && <button className="btn sm ghost" disabled={busy} onClick={() => { void changeMember(() => removeMember(m.email), `${m.name}'s access was removed.`); }} aria-label={`Remove ${m.name}`}>Remove</button>}
               </div>
             </div>
           ))}
@@ -430,9 +450,9 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
 
       <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
         {isAdmin ? (
-          <form className="card" onSubmit={invite} noValidate>
+          <form className="card" onSubmit={invite} noValidate aria-busy={busy}>
             <h2 className="h3">Invite a reviewer</h2>
-            <p className="subtle" style={{ marginTop: 0 }}>They'll score applicants alongside you. Use their USC email so we know it's really them.</p>
+            <p className="subtle" style={{ marginTop: 0 }}>Record their USC email here, then share the signup link. They must confirm that mailbox before using their account.</p>
             <label className="field" htmlFor="inv-email">USC email <span className="req">*</span></label>
             <input id="inv-email" className="input" type="email" value={f.email} onChange={(e) => { setF({ ...f, email: e.target.value }); setErr(null); }} placeholder="ttrojan@usc.edu" aria-invalid={!!err} />
             {err && <p className="field-error" role="alert">{err}</p>}
@@ -442,7 +462,7 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
             <select id="inv-role" className="input" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>
               {OFFICER_ROLES.map((r) => <option key={r}>{r}</option>)}
             </select>
-            <button className="btn primary" type="submit" style={{ marginTop: 16, width: "100%" }}>Send invite</button>
+            <button className="btn primary" type="submit" disabled={busy} style={{ marginTop: 16, width: "100%" }}>{busy ? "Saving…" : "Invite reviewer"}</button>
           </form>
         ) : (
           <div className="card"><p className="subtle" style={{ margin: 0 }}>Ask a club admin if someone else on your board should be reviewing.</p></div>
@@ -450,9 +470,9 @@ function Team({ clubId, isAdmin }: { clubId: string; isAdmin: boolean }) {
         <div className="card how-verify">
           <h2 className="h3">How we check officers</h2>
           <ul>
-            <li><strong>On the officer list?</strong> If your email is on your club's officer list from Campus Activities, you're in right away.</li>
-            <li><strong>Invited by an admin?</strong> You're in when you sign up with that email.</li>
-            <li><strong>Neither?</strong> You wait until an admin approves you.</li>
+            <li><strong>USC email confirmed?</strong> This checks mailbox access, not enrollment or a board position.</li>
+            <li><strong>Invited by an admin?</strong> Sign up with that email to use the invitation recorded in OdySC.</li>
+            <li><strong>Requesting access?</strong> A club admin must approve your membership. The project operator sets up each club's first admin.</li>
           </ul>
         </div>
       </div>
@@ -467,41 +487,60 @@ function Settings({ clubId }: { clubId: string }) {
   const club = clubById(clubId)!;
   const [reason, setReason] = useState(club.uscIdReason ?? "");
   const [saved, setSaved] = useState(false);
-  const on = !!club.requiresUscId;
+  const [on, setOn] = useState(!!club.requiresUscId);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setOn(!!club.requiresUscId);
+    setReason(club.uscIdReason ?? "");
+  }, [club.requiresUscId, club.uscIdReason]);
   const tooShort = on && reason.trim().length < 15;
+  const save = async () => {
+    if (pending) return;
+    if (tooShort) return setError("Explain why IDs are needed using at least 15 characters.");
+    setPending(true);
+    setError("");
+    setSaved(false);
+    try {
+      await setClubSetting(clubId, { requiresUscId: on, uscIdReason: reason.trim() });
+      setSaved(true);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "Settings could not be saved."); }
+    finally { setPending(false); }
+  };
   return (
     <div style={{ display: "grid", gap: 16, maxWidth: 680 }}>
     <div className="card settings-card">
       <h2 className="h3">Interview video calls</h2>
-      <p className="subtle">Connect your club's account once. When a student books an interview, OdySC creates the meeting and emails the link to both of you.</p>
-      {([["zoom", "Zoom", club.zoomConnected], ["teams", "Microsoft Teams", club.teamsConnected]] as const).map(([id, name, on]) => (
+      <p className="subtle">Create a meeting with your preferred provider, then paste its HTTPS link into the interview invitation.</p>
+      {([["zoom", "Zoom"], ["teams", "Microsoft Teams"]] as const).map(([id, name]) => (
         <div key={id} className="integration-row">
           <span className="iv-ico"><FormatIcon format={id} /></span>
           <div style={{ minWidth: 0 }}>
             <strong>{name}</strong>
-            <div className="subtle" style={{ fontSize: 14 }}>{on ? "Connected. New interviews get their own meeting link." : "Not connected. You can still paste a link per interview."}</div>
+            <div className="subtle" style={{ fontSize: 14 }}>Manual meeting links. Automatic provider connection is not configured.</div>
           </div>
-          <button className={`btn sm ${on ? "ghost" : "primary"}`} onClick={() => setClubSetting(clubId, id === "zoom" ? { zoomConnected: !on } : { teamsConnected: !on })}>{on ? "Disconnect" : "Connect"}</button>
+          <button className="btn sm primary" disabled title="Paste a meeting link into each interview invitation.">Connect</button>
         </div>
       ))}
-      <p className="subtle" style={{ fontSize: 13, margin: "10px 0 0" }}>Google Meet links are created automatically. In-person interviews just need a room.</p>
+      <p className="subtle" style={{ fontSize: 13, margin: "10px 0 0" }}>Google Meet also requires a pasted meeting link. In-person interviews need a building and room.</p>
     </div>
     <div className="card settings-card">
       <h2 className="h3">USC ID</h2>
-      <p className="subtle">Student IDs are private by default. Nobody, including your e-board, sees them. Only turn this on if you truly need IDs (for example a background check or a building access list).</p>
+      <p className="subtle">Student IDs are private unless an applicant explicitly shares theirs with your club. Only request IDs when your club needs them, and explain why.</p>
       <label className="switch-row">
-        <input type="checkbox" checked={on} onChange={(e) => { setClubSetting(clubId, { requiresUscId: e.target.checked }); setSaved(false); }} />
+        <input type="checkbox" checked={on} disabled={pending} onChange={(e) => { setOn(e.target.checked); setSaved(false); setError(""); }} />
         <span><strong>Ask applicants for their USC ID</strong><br /><span className="subtle">Students see your reason and must agree before applying. You'll only see IDs from students who agreed.</span></span>
       </label>
-      {on && (
         <div className="reveal" style={{ marginTop: 14 }}>
+          {on && <>
           <label className="field" htmlFor="id-reason">Why you need it <span className="req">*</span></label>
-          <textarea id="id-reason" className="input" rows={3} value={reason} onChange={(e) => { setReason(e.target.value); setSaved(false); }} placeholder="e.g. Our venue needs a list of USC IDs for building access." aria-invalid={saved && tooShort} />
+          <textarea id="id-reason" className="input" rows={3} value={reason} disabled={pending} onChange={(e) => { setReason(e.target.value); setSaved(false); setError(""); }} placeholder="e.g. Our venue needs a list of USC IDs for building access." aria-invalid={!!error && tooShort} />
           {tooShort && <p className="subtle" style={{ fontSize: 13 }}>Write at least a full sentence. Students read this before deciding.</p>}
-          <button className="btn primary" style={{ marginTop: 10 }} disabled={tooShort} onClick={() => { setClubSetting(clubId, { uscIdReason: reason.trim() }); setSaved(true); }}>Save reason</button>
+          </>}
+          {error && <p className="field-error" role="alert">{error}</p>}
+          <button className="btn primary" style={{ marginTop: 10 }} disabled={pending || tooShort} onClick={() => { void save(); }}>{pending ? "Saving…" : on ? "Save reason" : "Save settings"}</button>
           {saved && <span className="subtle" style={{ marginLeft: 10 }} role="status">Saved</span>}
         </div>
-      )}
     </div>
     </div>
   );

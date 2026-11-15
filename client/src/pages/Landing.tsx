@@ -1,10 +1,9 @@
 // Signed-out home page. One continuous piece: red photo hero → wave → warm cream
 // "how it works" → wave → red campus band with the line-art skyline and the footer.
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { CampusArt, Sparkles, Stroke } from "../components/AuthScene";
 import { PHOTOS } from "../photos";
-import { useApp } from "../store";
 
 /** Adds "in" once the element scrolls into view, so drawings start when you see them. */
 function useInView<T extends HTMLElement>() {
@@ -59,8 +58,6 @@ const STEPS = [
 export default function Landing() {
   const [stepsRef, stepsIn] = useInView<HTMLDivElement>();
   const [bandRef, bandIn] = useInView<HTMLElement>();
-  const { reset, signIn } = useApp();
-  const nav = useNavigate();
 
   return (
     <div className="landing">
@@ -121,8 +118,8 @@ export default function Landing() {
         <div className="glow g1" aria-hidden="true" />
         <Sparkles />
         <div className="container band-copy">
-          <h2>Clubs are recruiting now.</h2>
-          <p>Fall applications are open. Set up your profile now and you can apply the moment a club catches your eye.</p>
+          <h2>Find your next campus connection.</h2>
+          <p>Explore USC clubs and set up your profile so you’re ready for the opportunities that fit you.</p>
           <div className="row wrap" style={{ gap: 16, justifyContent: "center" }}>
             <Link to="/start" className="btn pill-white">Create an account</Link>
             <Link to="/start?next=signin" className="hero-link">Sign in</Link>
@@ -133,10 +130,6 @@ export default function Landing() {
           <span>
             OdySC · built on Replit for USC Trojans · Photos from{" "}
             <a className="text-link light" href="https://www.pexels.com" target="_blank" rel="noreferrer">Pexels</a>
-          </span>
-          <span className="row" style={{ gap: 14 }}>
-            <button className="link-btn light" onClick={() => { signIn("membership@nsbe.example.com"); nav("/org"); }}>Demo: club officer view</button>
-            <button className="link-btn light" onClick={() => { reset(); nav("/"); }}>Reset demo</button>
           </span>
         </footer>
       </section>

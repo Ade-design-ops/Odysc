@@ -1,38 +1,54 @@
-# OdySC — frontend
+# OdySC frontend
 
-React + Vite + TypeScript. White-first USC theme (cardinal `#990000`, gold `#FFCC00`).
+React + Vite + TypeScript, connected to the shared Fastify/Supabase backend. The USC theme is preserved. `src/api.ts` uses live requests (`USE_MOCKS=false`); browser-local demo accounts no longer establish authentication.
 
-## Run it
+## Run locally
 
-```bash
-cd client
+Use Node 24+. Start the configured backend first:
+
+```sh
+cd backend
 npm install
-npm run dev        # http://localhost:5173 (also works in Replit's preview)
+npm run dev
 ```
 
-## How it flows (Common App style)
+From the repository root, in another terminal:
 
-Features reveal themselves as the student goes deeper. Nothing is dumped on the first screen.
+```sh
+cd client
+npm install
+npm run dev
+```
 
-| Tab | What it shows |
-|---|---|
-| Dashboard `#/` | New user: only "build your profile". After that: what's next (unfinished apps by deadline) and upcoming events for your clubs |
-| Profile `#/profile` | Sections with checkmarks + resume autofill. Finishing it **unlocks recommendations**. "Saved answers" appears after your first submission |
-| Club Search `#/search` | Search, category filters, "Open to everyone", **+ Add** to your list. "Recommended for you" only after the profile is done |
-| Club page `#/search/:slug` | About, facts, add button; events (with hologram map), contacts and questions tucked into expandable rows |
-| My Clubs `#/my-clubs/:slug` | Your list on the left; each club in 3 steps: Overview → Questions → Review & submit. Answer reuse appears inside Questions; status timeline + Free Agent appear after submitting |
-| Club view `#/org` | Officer side: blind review, AI summary + evidence, prompt-injection flag, rubric, decisions |
+Open [http://localhost:5173](http://localhost:5173). Vite proxies `/api` to `http://127.0.0.1:3001`. The backend requires private Supabase settings; no database credentials or AI keys belong in frontend configuration. The shared migrations have already been applied to the team's project.
 
-Demo helpers: footer **Reset demo** clears everything; after submitting, "Demo · simulate the club's decision" shows Interview / Accepted / Free Agent.
+## Current flows
 
-## Plugging in the backend
+- USC email/password signup, confirmation/resend, sign-in, and password recovery/reset.
+- Server-backed profile editing and explicit completion; only name, year, major, and interests are required.
+- Real PDF upload and reviewed extraction suggestions; PDF remains optional.
+- Shared directory, club matching, saved club list/drafts, real application submission and status.
+- Optional answer memory after submission consent, private USC ID sharing only with a stated club reason and student consent.
+- Personal calendar preferences/events and in-app reminder preferences saved to the server.
+- Pending officer requests, approved team/admin permissions, applicant review, scores, decisions, and interview offers/bookings.
 
-Everything goes through `src/api.ts`. Set `USE_MOCKS = false` once `server/` serves the
-endpoints in `shared/api.md` — no page code changes. Vite proxies `/api` to `localhost:3000`.
+The explicitly authorized initial NSBE administrator is linked to real club ID `36288`. Other club access requires approval; choosing an officer tab does not grant authority. A confirmed USC email or optional USC ID does not prove current enrollment.
 
-## Where things live
+## Sessions and API
 
-- `src/components/Hologram.tsx`: isometric campus map. Add buildings to `BUILDINGS` (grid coords).
-- `src/components/ui.tsx`: nav, club monograms (unique pattern per club), cards, toast.
-- `src/data/mock.ts`: demo data. Contacts and stats are placeholders.
-- `src/util.ts`: `similarity()` is a stand-in for the AI's embedding search; `TODAY` is pinned to Nov 14 for the demo.
+`src/api.ts` sends HttpOnly cookies and a private-request `X-Odysc-Actor` consistency header. `src/store.tsx` hydrates from `/api/session`, queues profile/workspace mutations, handles stale sessions, and resets state when accounts change. Tokens and passwords are not saved in browser storage.
+
+See [shared/api.md](../shared/api.md) for browser routes and [shared workflows](../docs/SHARED_WORKFLOWS.md) for the complete contract. The browser uses `/api/*`; some older native `/api/v1/*` application/organization paths remain 503 placeholders and are not its implementation.
+
+HashRouter routes include `/#/signin`, `/#/signup`, `/#/profile`, `/#/search`, `/#/my-clubs`, `/#/calendar`, `/#/org`, `/#/check-email`, `/#/forgot-password`, `/#/reset-password`, and `/#/auth/error`. The allowlisted Supabase callback belongs to the backend at `http://localhost:3001/auth/callback`, which redirects to the correct frontend hash route.
+
+## Verification and limits
+
+```sh
+cd client
+npm run build
+```
+
+Unknown directory facts are shown as unavailable. Matching may use heuristic fallback, and applicant summaries use submitted source text. Calendar/reminder preferences are in-app records, not scheduled notification emails. Video interviews require a real manually supplied HTTPS link; Zoom/Teams OAuth and automatic meeting creation are not connected. Real Auth email delivery/SMTP and deployed redirects remain untested. PDF files still require persistent backend storage and one backend instance.
+
+Useful files: `src/api.ts` (transport), `src/store.tsx` (server state), `src/pages/AuthFlows.tsx` (email-link flows), `src/components/CampusMap.tsx` and `src/data/buildings.ts` (campus map), `src/data/reference.ts` (static labels/colors), and `src/styles.css` (existing visual design). `src/data/mock.ts` remains historical fixture data, not the live data source.

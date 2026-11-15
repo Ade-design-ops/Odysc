@@ -76,7 +76,7 @@ function AccountMenu() {
             <div className="subtle">{sub}</div>
           </div>
           {account.role === "student" && <Link role="menuitem" to="/profile" onClick={() => setOpen(false)}>Profile</Link>}
-          <button role="menuitem" onClick={() => { signOut(); setOpen(false); navTo("/"); }}>Sign out</button>
+          <button role="menuitem" onClick={async () => { try { await signOut(); setOpen(false); navTo("/"); } catch { /* The shared error toast explains a failed sign-out. */ } }}>Sign out</button>
         </div>
       )}
     </div>
@@ -148,7 +148,7 @@ export function AddButton({ club, size = "sm" }: { club: Club; size?: "sm" | "md
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!added) addClub(club.id);
+        if (!added) void addClub(club.id).catch(() => {});
       }}
       aria-pressed={added}
       aria-label={added ? `${club.name} is in My Clubs` : `Add ${club.name} to My Clubs`}

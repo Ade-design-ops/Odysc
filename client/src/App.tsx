@@ -1,8 +1,8 @@
 import { useEffect } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { Nav } from "./components/ui";
-import { USE_MOCKS } from "./api";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Loading, Nav, Toast } from "./components/ui";
 import Auth from "./pages/Auth";
+import { AuthError, CheckEmail, ForgotPassword, ResetPassword } from "./pages/AuthFlows";
 import ClubPage from "./pages/ClubPage";
 import Calendar from "./pages/Calendar";
 import Dashboard from "./pages/Dashboard";
@@ -15,14 +15,20 @@ import { useApp } from "./store";
 
 export default function App() {
   const { pathname } = useLocation();
-  const nav = useNavigate();
-  const { account, reset, signIn } = useApp();
+  const { account, ready, loadError, mutationError, clearMutationError, refresh } = useApp();
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);
   useEffect(() => {
     document.body.classList.toggle("signed-in", !!account);
   }, [account]);
+
+  if (pathname === "/check-email") return <CheckEmail />;
+  if (pathname === "/forgot-password") return <ForgotPassword />;
+  if (pathname === "/reset-password") return <ResetPassword />;
+  if (pathname === "/auth/error") return <AuthError />;
+  if (!ready) return <div className="shell"><main className="container"><Loading /></main></div>;
+  if (loadError) return <div className="shell"><Nav /><main className="container page-fade"><div className="card panel"><p className="field-error" role="alert">{loadError}</p><button className="btn primary" onClick={() => { void refresh().catch(() => {}); }}>Try again</button></div></main></div>;
 
   // Sign in / sign up get their own full-page scene (no app nav or footer).
   if (pathname === "/signin" || pathname === "/signup" || pathname === "/start") {
@@ -41,6 +47,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={!account ? <Landing /> : role === "officer" ? <Navigate to="/org" replace /> : <Dashboard />} />
           <Route path="/profile" element={student(<Profile />)} />
+          <Route path="/student" element={<Navigate to="/profile" replace />} />
           <Route path="/search" element={student(<Search />)} />
           <Route path="/search/:slug" element={student(<ClubPage />)} />
           <Route path="/my-clubs" element={student(<MyClubs />)} />
@@ -56,19 +63,9 @@ export default function App() {
             OdySC · built on Replit for USC Trojans · Photos from{" "}
             <a className="text-link" href="https://www.pexels.com" target="_blank" rel="noreferrer">Pexels</a>
           </span>
-          {USE_MOCKS && (
-            <span className="row" style={{ gap: 12 }}>
-              Prototype · demo data
-              {role !== "officer" && (
-                <button className="link-btn" onClick={() => { signIn("membership@nsbe.example.com"); nav("/org"); }}>
-                  Demo: club officer view
-                </button>
-              )}
-              <button className="link-btn" onClick={() => { reset(); nav("/"); }}>Reset demo</button>
-            </span>
-          )}
         </div>
       </footer>}
+      <Toast message={mutationError} onDone={clearMutationError} />
     </div>
   );
 }

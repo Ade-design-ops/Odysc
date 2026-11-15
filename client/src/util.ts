@@ -1,5 +1,5 @@
-// Small helpers. `similarity` is a client-side stand-in for the AI engineer's embedding
-// search (/api/ai/answer-bank) so autofill works in the demo before the AI is wired up.
+// Small helpers. Answer suggestions compare prompts from the student's own
+// saved answer bank. Students review each suggestion before using it.
 
 const STOP = new Set(
   "a an the to of and or for in on at with you your we our us me my i do did does is are be about tell describe what why how would join part".split(" "),
@@ -26,7 +26,7 @@ export function similarity(a: string, b: string, ignore: string[] = []) {
 }
 
 const DAY = 86_400_000;
-export const TODAY = new Date("2026-11-14T12:00:00"); // pinned for the demo; use new Date() later
+export const TODAY = new Date();
 
 // Date-only strings ("2026-11-21") mean end of that day in local time, not UTC midnight.
 export function toDate(iso: string) {
@@ -41,6 +41,7 @@ export function daysUntil(iso: string) {
 }
 
 export function dueLabel(iso: string) {
+  if (!iso || !Number.isFinite(toDate(iso).getTime())) return "No deadline posted";
   const d = daysUntil(iso);
   if (d < 0) return "Closed";
   if (d === 0) return "Due today";
@@ -49,32 +50,15 @@ export function dueLabel(iso: string) {
 }
 
 export function fmtDate(iso: string) {
+  if (!iso || !Number.isFinite(toDate(iso).getTime())) return "Not provided";
   return toDate(iso).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
 export function fmtTime(iso: string) {
+  if (!iso || !Number.isFinite(toDate(iso).getTime())) return "Not provided";
   return toDate(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 export function wordCount(s: string) {
   return s.trim() ? s.trim().split(/\s+/).length : 0;
 }
-
-// Browser storage can throw (private mode, some embeds) — never let it crash the app.
-export const store = {
-  get<T>(key: string, fallback: T): T {
-    try {
-      const v = localStorage.getItem(`odysc:${key}`);
-      return v ? (JSON.parse(v) as T) : fallback;
-    } catch {
-      return fallback;
-    }
-  },
-  set(key: string, value: unknown) {
-    try {
-      localStorage.setItem(`odysc:${key}`, JSON.stringify(value));
-    } catch {
-      /* ignore */
-    }
-  },
-};

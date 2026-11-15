@@ -7,7 +7,7 @@ import CampusMap from "../components/CampusMap";
 import HomeBand from "../components/HomeBand";
 import { Loading } from "../components/ui";
 import { BUILDINGS } from "../data/buildings";
-import { CAL_COLORS } from "../data/mock";
+import { CAL_COLORS } from "../data/reference";
 import { useApp } from "../store";
 import { TODAY, fmtDate, fmtTime, toDate } from "../util";
 
@@ -31,7 +31,7 @@ const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 
 export default function Calendar() {
   const s = useApp();
-  const { ready, events, myClubs, clubById, calAdded, personal, calColors, calHidden, toggleCalHidden, setCalColor, apps, interviews } = s;
+  const { ready, events, myClubs, clubById, calAdded, personal, calColors, calHidden, toggleCalHidden, setCalColor, apps, interviews, applicationIdForClub } = s;
   const [month, setMonth] = useState(new Date(TODAY.getFullYear(), TODAY.getMonth(), 1));
   const [view, setView] = useState<"month" | "agenda">("month");
   const [selected, setSelected] = useState<Item | null>(null);
@@ -43,10 +43,10 @@ export default function Calendar() {
     return [
       ...clubIds.map((id) => ({ key: id, label: clubById(id)?.shortName ?? id })),
       { key: "personal", label: "Personal" },
-      ...(Object.values(interviews).some((iv) => iv.booked && iv.applicationId.startsWith("me_")) ? [{ key: "interviews", label: "Interviews" }] : []),
+      ...(Object.values(interviews).some((iv) => iv.booked && applicationIdForClub(iv.clubId) === iv.applicationId) ? [{ key: "interviews", label: "Interviews" }] : []),
       { key: "deadlines", label: "Application deadlines" },
     ];
-  }, [myClubs, events, calAdded, clubById, interviews]);
+  }, [myClubs, events, calAdded, clubById, interviews, applicationIdForClub]);
   const colorOf = (key: string) => calColors[key] ?? (key === "deadlines" ? "#c99700" : key === "interviews" ? "#5b4bb7" : key === "personal" ? "#23211f" : CLUB_DEFAULTS[Math.max(0, calendars.findIndex((c) => c.key === key)) % CLUB_DEFAULTS.length]);
 
   const items = useMemo<Item[]>(() => {
@@ -59,16 +59,16 @@ export default function Calendar() {
     for (const p of personal) out.push({ key: "personal", id: p.id, kind: "personal", title: p.title, short: p.title, start: new Date(p.start), durationMin: p.durationMin, where: p.location, personal: p });
     for (const id of myClubs) {
       const c = clubById(id);
-      if (!c || (apps[id] && apps[id].status !== "draft")) continue;
+      if (!c || !c.deadline || (apps[id] && apps[id].status !== "draft")) continue;
       out.push({ key: "deadlines", id: `dl_${id}`, kind: "deadline", title: `${c.shortName} application due`, short: `${c.shortName} due`, start: toDate(c.deadline) });
     }
     for (const iv of Object.values(interviews)) {
-      if (!iv.booked || !iv.applicationId.startsWith("me_")) continue;
+      if (!iv.booked || applicationIdForClub(iv.clubId) !== iv.applicationId) continue;
       const c = clubById(iv.clubId);
       out.push({ key: "interviews", id: `iv_${iv.clubId}`, kind: "personal", title: `${c?.shortName} interview`, short: `${c?.shortName} interview`, start: new Date(iv.booked), durationMin: iv.durationMin, where: iv.room ?? (iv.format === "zoom" ? "Zoom" : iv.format === "teams" ? "Teams" : "Google Meet") });
     }
-    return out.filter((i) => !calHidden.includes(i.key)).sort((a, b) => a.start.getTime() - b.start.getTime());
-  }, [events, calAdded, myClubs, personal, apps, clubById, calHidden, interviews]);
+    return out.filter((i) => !calHidden.includes(i.key) && Number.isFinite(i.start.getTime())).sort((a, b) => a.start.getTime() - b.start.getTime());
+  }, [events, calAdded, myClubs, personal, apps, clubById, calHidden, interviews, applicationIdForClub]);
 
   if (!ready) return <Loading />;
 
@@ -105,14 +105,14 @@ export default function Calendar() {
             {calendars.map((c) => (
               <li key={c.key}>
                 <label className="cal-check">
-                  <input type="checkbox" checked={!calHidden.includes(c.key)} onChange={() => toggleCalHidden(c.key)} style={{ accentColor: colorOf(c.key) }} />
+                  <input type="checkbox" checked={!calHidden.includes(c.key)} onChange={() => { void toggleCalHidden(c.key).catch(() => {}); }} style={{ accentColor: colorOf(c.key) }} />
                   <span>{c.label}</span>
                 </label>
                 <button className="swatch" style={{ background: colorOf(c.key) }} onClick={() => setPicking(picking === c.key ? null : c.key)} aria-label={`Change color for ${c.label}`} aria-expanded={picking === c.key} />
                 {picking === c.key && (
                   <div className="swatches reveal" role="group" aria-label={`Colors for ${c.label}`}>
                     {CAL_COLORS.map((col) => (
-                      <button key={col} style={{ background: col }} aria-label={col} aria-pressed={colorOf(c.key) === col} onClick={() => { setCalColor(c.key, col); setPicking(null); }} />
+                      <button key={col} style={{ background: col }} aria-label={col} aria-pressed={colorOf(c.key) === col} onClick={() => { void setCalColor(c.key, col).then(() => setPicking(null)).catch(() => {}); }} />
                     ))}
                   </div>
                 )}
@@ -199,11 +199,11 @@ function EventDrawer({ item, color, onClose }: { item: Item; color: string; onCl
           {e && BUILDINGS[e.buildingCode] && <CampusMap code={e.buildingCode} room={e.room} title={e.title} when={`${fmtDate(e.start)}, ${fmtTime(e.start)}`} />}
           <div className="row wrap" style={{ gap: 8 }}>
             {e && (
-              <button className={`btn ${added ? "" : "primary"}`} onClick={() => { toggleCalEvent(e.id); if (added) onClose(); }}>
+              <button className={`btn ${added ? "" : "primary"}`} onClick={() => { void toggleCalEvent(e.id).then(() => { if (added) onClose(); }).catch(() => {}); }}>
                 {added ? "Remove from my calendar" : "Add to my calendar"}
               </button>
             )}
-            {item.personal && <button className="btn" onClick={() => { removePersonal(item.personal!.id); onClose(); }}>Delete event</button>}
+            {item.personal && <button className="btn" onClick={() => { void removePersonal(item.personal!.id).then(onClose).catch(() => {}); }}>Delete event</button>}
           </div>
         </div>
       </div>
@@ -215,7 +215,8 @@ function NewEvent({ date, onClose }: { date: string; onClose: () => void }) {
   const { addPersonal } = useApp();
   const [f, setF] = useState({ title: "", date, time: "18:00", duration: "60", location: "" });
   const [err, setErr] = useState<Record<string, string>>({});
-  const save = (ev: React.FormEvent) => {
+  const [saving, setSaving] = useState(false);
+  const save = async (ev: React.FormEvent) => {
     ev.preventDefault();
     const e: Record<string, string> = {};
     if (!f.title.trim()) e.title = "Give it a name.";
@@ -223,8 +224,12 @@ function NewEvent({ date, onClose }: { date: string; onClose: () => void }) {
     if (!f.time) e.time = "Pick a time.";
     setErr(e);
     if (Object.keys(e).length) return;
-    addPersonal({ title: f.title.trim(), start: `${f.date}T${f.time}:00`, durationMin: Number(f.duration), location: f.location.trim() || undefined });
-    onClose();
+    setSaving(true);
+    try {
+      await addPersonal({ title: f.title.trim(), start: new Date(`${f.date}T${f.time}:00`).toISOString(), durationMin: Number(f.duration), location: f.location.trim() || undefined });
+      onClose();
+    } catch (error) { setErr({ title: error instanceof Error ? error.message : "Could not save this event. Please try again." }); }
+    finally { setSaving(false); }
   };
   const set = (k: keyof typeof f, v: string) => { setF((x) => ({ ...x, [k]: v })); setErr((x) => ({ ...x, [k]: "" })); };
   return (
@@ -264,7 +269,7 @@ function NewEvent({ date, onClose }: { date: string; onClose: () => void }) {
           </div>
           <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
             <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn primary">Add to calendar</button>
+            <button type="submit" className="btn primary" disabled={saving}>{saving ? "Saving…" : "Add to calendar"}</button>
           </div>
         </div>
       </form>

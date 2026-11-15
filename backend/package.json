@@ -1,0 +1,39 @@
+{
+  "name": "odysc-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file-if-exists=.env dist/server.js",
+    "seed": "node --env-file-if-exists=.env --import tsx src/seed-cli.ts",
+    "inspect:supabase": "node --env-file-if-exists=.env scripts/inspect-supabase.mjs",
+    "usc:status": "node --env-file-if-exists=.env scripts/usc-email-access.mjs --status",
+    "usc:verify": "node --env-file-if-exists=.env scripts/usc-email-access.mjs --verify",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "workflow:verify": "node --env-file-if-exists=.env --import tsx scripts/verify-shared-workflows.mts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "@fastify/multipart": "^10.1.8",
+    "@fastify/rate-limit": "^10.0.0",
+    "@fastify/swagger": "^9.0.0",
+    "@fastify/swagger-ui": "^5.0.0",
+    "@sinclair/typebox": "^0.34.0",
+    "fastify": "^5.0.0",
+    "pg": "^8.23.1",
+    "unpdf": "^2.2.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -29,7 +29,7 @@ export default function ClubPage() {
             {added ? (
               <button className="btn primary" onClick={() => nav(`/my-clubs/${club.slug}`)}>Open application</button>
             ) : (
-              <button className="btn primary" onClick={() => addClub(club.id)}>+ Add to My Clubs</button>
+              <button className="btn primary" onClick={() => { void addClub(club.id).catch(() => {}); }}>+ Add to My Clubs</button>
             )}
             <DuePill iso={club.deadline} />
           </div>

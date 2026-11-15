@@ -65,6 +65,7 @@ export function EventList({ club, events }: { club: Club; events: ClubEvent[] })
 }
 
 export function Contacts({ club }: { club: Club }) {
+  if (!club.contacts.length) return <p className="subtle">No contact details posted yet.</p>;
   return (
     <div>
       {club.contacts.map((p) => (
@@ -85,9 +86,9 @@ export function Facts({ club }: { club: Club }) {
   return (
     <dl className="facts">
       <div><dt>Deadline</dt><dd>{fmtDate(club.deadline)}</dd></div>
-      <div><dt>Time</dt><dd>{club.hoursPerWeek}</dd></div>
-      <div><dt>Dues</dt><dd>{club.dues}</dd></div>
-      <div><dt>Membership</dt><dd>{club.selectivity === "Open" ? "Open to all" : `Selective · ${Math.round((club.acceptanceRate ?? 0) * 100)}%`}</dd></div>
+      <div><dt>Time</dt><dd>{club.hoursPerWeek || "Not provided"}</dd></div>
+      <div><dt>Dues</dt><dd>{club.dues || "Not provided"}</dd></div>
+      <div><dt>Membership</dt><dd>{club.selectivity === "Open" ? "Open to all" : club.selectivity === "Selective" ? `Selective${club.acceptanceRate !== undefined ? ` · ${Math.round(club.acceptanceRate * 100)}%` : ""}` : "Not provided"}</dd></div>
     </dl>
   );
 }
@@ -97,7 +98,7 @@ function CalButton({ id }: { id: string }) {
   if (account?.role !== "student") return null;
   const on = calAdded.includes(id);
   return (
-    <button className={`btn sm ${on ? "added" : ""}`} aria-pressed={on} onClick={() => toggleCalEvent(id)}>
+    <button className={`btn sm ${on ? "added" : ""}`} aria-pressed={on} onClick={() => { void toggleCalEvent(id).catch(() => {}); }}>
       {on ? "✓ On calendar" : "+ Calendar"}
     </button>
   );

@@ -1,7 +1,7 @@
 // OdySC shared contract — frontend, backend and AI all build against these shapes.
-// Change a type? Post in Discord first, then edit here.
 
-export type Category = "Engineering" | "Business" | "Service" | "Arts" | "Culture" | "Tech";
+// The live USC directory has categories beyond the original demo filters.
+export type Category = string;
 
 export interface Student {
   id: string;
@@ -9,13 +9,15 @@ export interface Student {
   preferredName?: string;
   pronouns?: string;
   email: string; // must be @usc.edu
-  uscId?: string; // 10-digit USC ID — used only to verify enrollment, never shown to clubs
+  uscId?: string; // Optional private profile data; not proof of enrollment.
   gradTerm?: string; // e.g. "Spring 2029"
   major: string;
-  year: number; // 1–4
+  year: number; // 0 = unset; 1–4 undergraduate, 5 fifth year+, 6 graduate, 7 other
   skills: string[];
   interests: string[];
   experiences: string[];
+  bio?: string;
+  goals?: string[];
 }
 
 export interface Contact {
@@ -51,12 +53,14 @@ export interface Club {
   category: Category;
   tagline: string;
   description: string;
-  selectivity: "Open" | "Selective";
-  acceptanceRate?: number; // 0–1, demo data
+  selectivity: "Open" | "Selective" | "Unknown";
+  acceptanceRate?: number; // 0–1, only when a source provides it
   hoursPerWeek: string;
   dues: string;
   deadline: string; // ISO date
+  acceptingApplications?: boolean;
   contacts: Contact[];
+  websiteUrl?: string | null;
   /** Off by default. A club can ask for USC IDs only with a stated reason; students consent per application. */
   requiresUscId?: boolean;
   uscIdReason?: string;
@@ -106,7 +110,8 @@ export interface Applicant {
   name: string;
   preferredName?: string;
   email: string; // what clubs use to contact applicants
-  verifiedStudent: boolean; // USC ID checked against enrollment at sign-up
+  verifiedStudent: boolean; // Legacy enrollment flag; false without university verification.
+  verifiedUscEmail?: boolean; // Provider-confirmed USC mailbox, not enrollment status.
   pronouns?: string;
   major: string;
   year: number;
@@ -131,7 +136,7 @@ export interface Account {
   // officers only
   clubId?: string;
   officerRole?: string;
-  verified?: boolean; // matched the club's officer roster, or approved by a club admin
+  verified?: boolean; // Active club membership approved by an authorized admin.
 }
 
 /** One person on a club's e-board inside OdySC. */
@@ -152,7 +157,7 @@ export interface PersonalEvent {
   location?: string;
 }
 
-/** How an interview happens. Video formats get a meeting link; in person gets a room. */
+/** How an interview happens. Video links are supplied by the organizer. */
 export type InterviewFormat = "zoom" | "teams" | "meet" | "in-person";
 
 /** A club invites an applicant to interview by offering times; the student books one. */
@@ -162,7 +167,7 @@ export interface Interview {
   format: InterviewFormat;
   slots: string[]; // ISO start times the club offered
   durationMin: number;
-  link?: string; // video: created when the student books (Zoom/Teams API) or pasted by the club
+  link?: string; // An actual organizer-supplied meeting URL, never a generated placeholder.
   buildingCode?: string; // in person
   room?: string;
   note?: string; // what to bring, who they'll meet

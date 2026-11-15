@@ -1,5 +1,12 @@
+.DS_Store
 node_modules/
 dist/
-*.tsbuildinfo
+coverage/
 .env
-.DS_Store
+.env.*
+!.env.example
+backend/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.tsbuildinfo

@@ -8,7 +8,7 @@ import { Contacts, EventList, Facts } from "../components/ClubBits";
 import { AddButton, DuePill, Loading, Monogram, Ring } from "../components/ui";
 import { PHOTOS } from "../photos";
 import { InterviewBooking } from "../components/Interview";
-import { appState, myAppId, statusLabel, useApp } from "../store";
+import { appState, useApp } from "../store";
 import { fmtDate, similarity, daysUntil, wordCount } from "../util";
 
 type Step = "overview" | "questions" | "review";
@@ -47,14 +47,14 @@ export default function MyClubs() {
         <aside className="side-list" aria-label="Your clubs">
           {mine.map((c) => {
             const st = appState(s, c);
-            const pct = st.status === "draft" ? st.answered / c.questions.length : 1;
+            const pct = st.status === "draft" ? c.questions.length ? st.answered / c.questions.length : 0 : 1;
             return (
               <Link key={c.id} to={`/my-clubs/${c.slug}`} className={`side-item club ${c.id === club.id ? "active" : ""}`}>
                 <Ring value={pct} size={18} />
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span className="row-title ellipsis">{c.shortName}</span>
                   <span className="subtle" style={{ display: "block", fontSize: 12 }}>
-                    {st.label}{st.status === "draft" ? ` · ${daysUntil(c.deadline) >= 0 ? `due ${fmtDate(c.deadline)}` : "closed"}` : ""}
+                    {st.label}{st.status === "draft" ? ` · ${!c.deadline ? "No deadline posted" : daysUntil(c.deadline) >= 0 ? `due ${fmtDate(c.deadline)}` : "closed"}` : ""}
                   </span>
                 </span>
               </Link>
@@ -89,7 +89,7 @@ function ClubPane({ club }: { club: Club }) {
         <Monogram club={club} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <Link to={`/search/${club.slug}`} className="h3 text-link">{club.name}</Link>
-          <div className="subtle">Closes {fmtDate(club.deadline)}</div>
+          <div className="subtle">{club.deadline ? `Closes ${fmtDate(club.deadline)}` : "No deadline posted"}</div>
         </div>
         {submitted ? <span className={`pill ${st.status === "rejected" ? "" : st.status === "accepted" ? "ok" : "cardinal"}`}>{st.label}</span> : <DuePill iso={club.deadline} />}
       </div>
@@ -127,7 +127,7 @@ function Overview({ club, onStart }: { club: Club; onStart: () => void }) {
       <Facts club={club} />
       <div className="row between wrap">
         <label className="toggle">
-          <input type="checkbox" checked={reminders.includes(club.id)} onChange={() => toggleReminder(club.id)} />
+          <input type="checkbox" disabled={!club.deadline} checked={Boolean(club.deadline) && reminders.includes(club.id)} onChange={() => { void toggleReminder(club.id).catch(() => {}); }} />
           Remind me 48 hours before the deadline
         </label>
         <button className="btn primary" onClick={onStart}>Start questions</button>
@@ -143,9 +143,8 @@ function Overview({ club, onStart }: { club: Club; onStart: () => void }) {
       <button
         className="btn ghost sm"
         style={{ alignSelf: "flex-start", color: "var(--ink-3)" }}
-        onClick={() => {
-          removeClub(club.id);
-          nav("/my-clubs");
+        onClick={async () => {
+          try { await removeClub(club.id); nav("/my-clubs"); } catch { /* The shared error toast explains the failure. */ }
         }}
       >
         Remove from my list
@@ -174,7 +173,7 @@ function Questions({ club, onNext }: { club: Club; onNext: () => void }) {
     return out;
   }, [club, clubs, answerBank]);
 
-  const set = (qid: string, text: string) => saveDraft(club.id, { ...draft, [qid]: text });
+  const set = (qid: string, text: string) => { saveDraft(club.id, { ...draft, [qid]: text }); };
 
   const voice = (qid: string) => {
     const from = origin[qid];
@@ -188,6 +187,7 @@ function Questions({ club, onNext }: { club: Club; onNext: () => void }) {
 
   return (
     <div className="stack" style={{ gap: 22 }}>
+      {!club.questions.length && <p className="subtle">No additional questions have been posted. Review your profile before submitting.</p>}
       {club.questions.map((q, i) => {
         const sug = suggestions[q.id];
         const v = voice(q.id);
@@ -227,16 +227,19 @@ function Review({ club, onEdit }: { club: Club; onEdit: () => void }) {
   const { drafts, profile, profileDone, submitWithId } = useApp();
   const [sending, setSending] = useState(false);
   const [consent, setConsent] = useState(false);
+  const [remember, setRemember] = useState(false);
+  const [submissionError, setSubmissionError] = useState("");
   const draft = drafts[club.id] ?? {};
   const missing = club.questions.filter((q) => !(draft[q.id] ?? "").trim());
   const over = club.questions.filter((q) => q.maxWords && wordCount(draft[q.id] ?? "") > q.maxWords);
-  const closed = daysUntil(club.deadline) < 0;
+  const closed = !!club.deadline && daysUntil(club.deadline) < 0;
   const problems = [
     ...(!profileDone ? ["Finish your profile first."] : []),
     ...missing.map((q) => `Answer: "${q.prompt}"`),
     ...over.map((q) => `Shorten: "${q.prompt}" (over ${q.maxWords} words)`),
     ...(closed ? ["This application is closed."] : []),
     ...(club.requiresUscId && !consent ? [`Agree to share your USC ID with ${club.shortName}.`] : []),
+    ...(club.requiresUscId && !profile.uscId ? ["Add your USC ID to your profile before sharing it with this club."] : []),
   ];
 
   return (
@@ -265,6 +268,9 @@ function Review({ club, onEdit }: { club: Club; onEdit: () => void }) {
         </label>
       )}
 
+      <label className="check"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} /><span>Save these answers for reuse in my future applications.</span></label>
+      {submissionError && <div className="alert warn" role="alert">{submissionError}</div>}
+
       {problems.length > 0 && (
         <div className="alert warn" role="alert">
           <strong>Before you submit:</strong>
@@ -278,7 +284,10 @@ function Review({ club, onEdit }: { club: Club; onEdit: () => void }) {
           disabled={problems.length > 0 || sending}
           onClick={async () => {
             setSending(true);
-            await submitWithId(club.id, !!club.requiresUscId && consent);
+            setSubmissionError("");
+            try { await submitWithId(club.id, !!club.requiresUscId && consent, remember); }
+            catch (error) { setSubmissionError(error instanceof Error ? error.message : "Could not submit. Please try again."); }
+            finally { setSending(false); }
           }}
         >
           {sending ? "Submitting…" : `Submit to ${club.shortName}`}
@@ -291,8 +300,8 @@ function Review({ club, onEdit }: { club: Club; onEdit: () => void }) {
 const TIMELINE: AppStatus[] = ["submitted", "interview", "accepted"];
 
 function Status({ club, status }: { club: Club; status: AppStatus }) {
-  const { setStatus, matches, myClubs, clubById, apps, interviews, demoInterview } = useApp();
-  const iv = interviews[myAppId(club.id)];
+  const { matches, myClubs, clubById, apps, interviews, applicationIdForClub } = useApp();
+  const iv = interviews[applicationIdForClub(club.id) ?? ""];
   const reached = status === "rejected" ? 3 : TIMELINE.indexOf(status) + 1;
 
   // Free Agent: open clubs you haven't added, good fit, still accepting.
@@ -317,11 +326,11 @@ function Status({ club, status }: { club: Club; status: AppStatus }) {
 
       {status === "submitted" && (
         <div className="alert ok reveal">
-          <strong>Submitted to {club.shortName}.</strong> Your answers are saved. If another club asks a similar question, you can reuse them.
+          <strong>Submitted to {club.shortName}.</strong> Your Odysc application is saved. You can follow its status here.
         </div>
       )}
       {status === "interview" && <InterviewBooking iv={iv} club={club} />}
-      {status === "accepted" && <div className="alert ok">Welcome to {club.shortName}! Check your USC email for next steps.</div>}
+      {status === "accepted" && <div className="alert ok">Welcome to {club.shortName}! Contact the club for next steps.</div>}
 
       {status === "rejected" && (
         <div className="free-agent reveal">
@@ -348,12 +357,6 @@ function Status({ club, status }: { club: Club; status: AppStatus }) {
         </div>
       )}
 
-      <div className="demo-controls">
-        <span className="subtle">Demo · simulate the club's decision:</span>
-        {(["interview", "accepted", "rejected"] as AppStatus[]).map((x) => (
-          <button key={x} className="btn sm ghost" onClick={() => (x === "interview" && !iv ? demoInterview(club.id) : setStatus(club.id, x))} disabled={status === x}>{statusLabel(x)}</button>
-        ))}
-      </div>
     </div>
   );
 }

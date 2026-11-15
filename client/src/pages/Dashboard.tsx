@@ -2,7 +2,7 @@
 // everything else appears as they progress.
 import { Link } from "react-router-dom";
 import { DuePill, Loading, Monogram, Ring } from "../components/ui";
-import { PROFILE_SECTIONS, appState, myAppId, useApp } from "../store";
+import { PROFILE_SECTIONS, appState, useApp } from "../store";
 import { FormatIcon, formatLabel } from "../components/Interview";
 import { PHOTOS } from "../photos";
 import { TODAY, daysUntil, fmtDate, fmtTime, toDate } from "../util";
@@ -12,7 +12,8 @@ const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
 
 export default function Dashboard() {
   const s = useApp();
-  const { ready, profile, profileDone, profileProgress, myClubs, clubById, events, seenUnlock, markUnlockSeen, matches, calAdded, personal, toggleCalEvent, interviews } = s;
+  const { ready, profile, profileDone, profileProgress, myClubs, clubById, events, seenUnlock, markUnlockSeen, matches, calAdded, personal, toggleCalEvent, interviews, applicationIdForClub } = s;
+  const interviewForClub = (id: string) => interviews[applicationIdForClub(id) ?? ""];
   if (!ready) return <Loading />;
   const first = profile.preferredName || profile.name.split(" ")[0];
 
@@ -50,7 +51,7 @@ export default function Dashboard() {
   const mine = myClubs.map(clubById).filter((c): c is NonNullable<typeof c> => !!c);
   const todo = mine
     .map((c) => ({ c, st: appState(s, c) }))
-    .filter(({ c, st }) => st.status === "draft" && daysUntil(c.deadline) >= 0)
+    .filter(({ c, st }) => st.status === "draft" && (!c.deadline || daysUntil(c.deadline) >= 0))
     .sort((a, b) => a.c.deadline.localeCompare(b.c.deadline));
   const upcoming = events
     .filter((e) => myClubs.includes(e.clubId))
@@ -63,13 +64,14 @@ export default function Dashboard() {
   const onDay = (d: Date) => [
     ...events.filter((e) => added.has(e.id) && sameDay(new Date(e.start), d)).map((e) => ({ id: e.id, kind: "event" as const, label: `${clubById(e.clubId)?.shortName}: ${e.title}`, time: fmtTime(e.start) })),
     ...personal.filter((p) => sameDay(new Date(p.start), d)).map((p) => ({ id: p.id, kind: "personal" as const, label: p.title, time: fmtTime(p.start) })),
-    ...mine.filter((c) => interviews[myAppId(c.id)]?.booked && sameDay(new Date(interviews[myAppId(c.id)].booked!), d)).map((c) => ({ id: `iv_${c.id}`, kind: "interview" as const, label: `${c.shortName} interview`, time: fmtTime(interviews[myAppId(c.id)].booked!) })),
+    ...mine.filter((c) => interviewForClub(c.id)!?.booked && sameDay(new Date(interviewForClub(c.id)!.booked!), d)).map((c) => ({ id: `iv_${c.id}`, kind: "interview" as const, label: `${c.shortName} interview`, time: fmtTime(interviewForClub(c.id)!.booked!) })),
     ...todo.filter(({ c }) => sameDay(toDate(c.deadline), d)).map(({ c }) => ({ id: c.id, kind: "due" as const, label: `${c.shortName} due`, time: "11:59 PM" })),
   ];
-  const toBook = mine.map((c) => ({ c })).filter(({ c }) => interviews[myAppId(c.id)] && !interviews[myAppId(c.id)].booked && s.apps[c.id]?.status === "interview");
+  const toBook = mine.map((c) => ({ c })).filter(({ c }) => interviewForClub(c.id)! && !interviewForClub(c.id)!.booked && s.apps[c.id]?.status === "interview");
   const submitted = mine.filter((c) => s.apps[c.id] && s.apps[c.id].status !== "draft").length;
-  const dueSoon = todo.filter(({ c }) => daysUntil(c.deadline) <= 7).length;
+  const dueSoon = todo.filter(({ c }) => !!c.deadline && daysUntil(c.deadline) <= 7).length;
   const greeting = TODAY.getHours() < 12 ? "Morning" : TODAY.getHours() < 18 ? "Afternoon" : "Evening";
+  const positiveMatchCount = matches.filter((match) => Number.isFinite(match.score) && match.score > 0 && clubById(match.clubId)).length;
 
   return (
     <>
@@ -90,9 +92,9 @@ export default function Dashboard() {
         <div className="unlock card">
           <div>
             <div className="h3">Your profile is complete</div>
-            <div className="subtle">{matches.filter((m) => m.score >= 0.7).length} clubs match your profile. You'll see them at the top of Club Search.</div>
+            <div className="subtle">{positiveMatchCount > 0 ? `${positiveMatchCount} clubs match your profile. See your strongest matches in Club Search.` : "Explore clubs in Club Search. You can update your interests anytime."}</div>
           </div>
-          <Link to="/search" className="btn primary" onClick={markUnlockSeen}>See matches</Link>
+          <Link to="/search" className="btn primary" onClick={() => { void markUnlockSeen().catch(() => {}); }}>{positiveMatchCount > 0 ? "See matches" : "Explore clubs"}</Link>
         </div>
       )}
 
@@ -104,10 +106,10 @@ export default function Dashboard() {
           </div>
           {toBook.map(({ c }) => (
             <Link key={c.id} to={`/my-clubs/${c.slug}`} className="card hover iv-nudge">
-              <span className="iv-ico big"><FormatIcon format={interviews[myAppId(c.id)].format} size={22} /></span>
+              <span className="iv-ico big"><FormatIcon format={interviewForClub(c.id)!.format} size={22} /></span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="row-title">{c.shortName} wants to interview you</div>
-                <div className="subtle">{interviews[myAppId(c.id)].slots.length} times to pick from · {formatLabel(interviews[myAppId(c.id)].format)}</div>
+                <div className="subtle">{interviewForClub(c.id)!.slots.length} times to pick from · {formatLabel(interviewForClub(c.id)!.format)}</div>
               </div>
               <span className="btn primary sm">Pick a time</span>
             </Link>
@@ -155,7 +157,7 @@ export default function Dashboard() {
                         <div className="row-title">{c.shortName} · {e.title}</div>
                         <div className="subtle">{fmtTime(e.start)} · {e.room}</div>
                       </Link>
-                      <button className={`btn sm ${on ? "added" : ""}`} aria-pressed={on} onClick={() => toggleCalEvent(e.id)}>{on ? "✓ On calendar" : "+ Calendar"}</button>
+                      <button className={`btn sm ${on ? "added" : ""}`} aria-pressed={on} onClick={() => { void toggleCalEvent(e.id).catch(() => {}); }}>{on ? "✓ On calendar" : "+ Calendar"}</button>
                     </div>
                   );
                 })}

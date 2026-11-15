@@ -2,10 +2,10 @@
 // know who they are; the rest of the profile is finished later. Officers register for a club.
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { OFFICER_ROLES } from "../data/mock";
+import { OFFICER_ROLES } from "../data/reference";
 import { useApp } from "../store";
 
-const USC_EMAIL = /^[a-z0-9._%+-]+@usc\.edu$/i;
+const USC_EMAIL = /^[^\s@]+@usc\.edu$/i;
 const USC_ID = /^\d{10}$/;
 const STANDING = ["", "Freshman", "Sophomore", "Junior", "Senior"];
 const YEARS = [2026, 2027, 2028, 2029, 2030, 2031];
@@ -13,13 +13,15 @@ const YEARS = [2026, 2027, 2028, 2029, 2030, 2031];
 type Errors = Record<string, string>;
 
 export default function SignupForm({ role }: { role: "student" | "officer" }) {
-  const { accounts, clubs, signUpStudent, signUpOfficer } = useApp();
+  const { clubs, signUpStudent, signUpOfficer } = useApp();
   const nav = useNavigate();
   const [f, setF] = useState({
     first: "", last: "", preferred: "", pronouns: "", email: "", uscId: "", standing: "0", term: "Spring", year: "", agree: false,
     clubId: "", officerRole: "",
+    password: "", confirmPassword: "",
   });
   const [errors, setErrors] = useState<Errors>({});
+  const [pending, setPending] = useState(false);
   const set = (k: keyof typeof f, v: string | boolean) => {
     setF((x) => ({ ...x, [k]: v }));
     setErrors((e) => ({ ...e, [k]: "" }));
@@ -30,39 +32,40 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
     if (!f.first.trim()) e.first = "Enter your first name.";
     if (!f.last.trim()) e.last = "Enter your last name.";
     if (!USC_EMAIL.test(f.email.trim())) e.email = "Use your @usc.edu email.";
-    else if (accounts[f.email.trim().toLowerCase()]) e.email = "An account already uses this email. Sign in instead.";
+    if (`${f.first.trim()} ${f.last.trim()}`.length > 100) e.first = "Keep your full name to 100 characters or fewer.";
+    if (f.password.length < 10 || f.password.length > 128) e.password = "Use 10–128 characters for your OdySC password.";
+    if (f.confirmPassword !== f.password) e.confirmPassword = "The passwords do not match.";
     if (role === "student") {
-      if (!USC_ID.test(f.uscId.replace(/\D/g, ""))) e.uscId = "Your USC ID is the 10-digit number on your USCard.";
+      if (f.uscId.trim() && !USC_ID.test(f.uscId.replace(/\D/g, ""))) e.uscId = "Enter a 10-digit USC ID or leave this optional field blank.";
       if (f.standing === "0") e.standing = "Choose your class.";
-      if (!f.year) e.year = "Choose your graduation year.";
     } else {
       if (!f.clubId) e.clubId = "Choose your club.";
       if (!f.officerRole) e.officerRole = "Choose your role.";
     }
-    if (!f.agree) e.agree = role === "student" ? "Please agree before continuing." : "Please confirm you're a current officer.";
+    if (!f.agree) e.agree = role === "student" ? "Please agree before continuing." : "Please confirm your officer access request.";
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
-  const submit = (ev: React.FormEvent) => {
+  const submit = async (ev: React.FormEvent) => {
     ev.preventDefault();
+    if (pending) return;
     if (!validate()) return;
     const name = `${f.first.trim()} ${f.last.trim()}`;
-    if (role === "student") {
-      signUpStudent({
-        name,
-        preferredName: f.preferred.trim() || undefined,
-        pronouns: f.pronouns.trim() || undefined,
-        email: f.email.trim(),
-        uscId: f.uscId.replace(/\D/g, ""),
-        year: Number(f.standing),
-        gradTerm: `${f.term} ${f.year}`,
-      });
-      nav("/");
-    } else {
-      signUpOfficer({ name, email: f.email.trim(), clubId: f.clubId, officerRole: f.officerRole });
-      nav("/org");
-    }
+    setPending(true);
+    try {
+      const result = role === "student" ? await signUpStudent({
+        name, email: f.email.trim(), password: f.password,
+        preferredName: f.preferred.trim() || undefined, pronouns: f.pronouns.trim() || undefined,
+        uscId: f.uscId.replace(/\D/g, "") || undefined, year: Number(f.standing),
+        gradTerm: f.year ? `${f.term} ${f.year}` : undefined,
+      }) : await signUpOfficer({ name, email: f.email.trim(), clubId: f.clubId, officerRole: f.officerRole, password: f.password });
+      setF((current) => ({ ...current, password: "", confirmPassword: "" }));
+      if (result.requiresEmailConfirmation) nav("/check-email", { state: { email: f.email.trim(), as: role } });
+      else nav(role === "officer" ? "/org" : "/profile");
+    } catch (failure) {
+      setErrors((current) => ({ ...current, submit: failure instanceof Error ? failure.message : "Your account could not be created. Please try again." }));
+    } finally { setPending(false); }
   };
 
   const err = (k: string) => errors[k] && <p id={`${k}-err`} className="field-error" role="alert">{errors[k]}</p>;
@@ -75,12 +78,12 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
         {role === "student" ? (
           <><strong>New Trojan?</strong> This tells clubs who you are. You'll fill out the rest of your profile next.</>
         ) : (
-          <><strong>Run a club?</strong> Register as an officer to receive and review your club's applications.</>
+          <><strong>Run a club?</strong> Request officer access to your club. A club admin must approve access before you can review applications.</>
         )}
       </p>
       <p className="req-note"><span className="req">*</span> Required</p>
 
-      <form onSubmit={submit} noValidate>
+      <form onSubmit={submit} noValidate aria-busy={pending}>
         <div className="form-grid">
           <div>
             <label className="field" htmlFor="first">First name <span className="req">*</span></label>
@@ -112,12 +115,24 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
             {err("email")}
           </div>
 
+          <div>
+            <label className="field" htmlFor="signup-password">OdySC password <span className="req">*</span></label>
+            <input id="signup-password" className="input" type="password" autoComplete="new-password" maxLength={128} value={f.password} onChange={(e) => set("password", e.target.value)} {...aria("password")} />
+            <p className="hint">Use 10–128 characters.</p>
+            {err("password")}
+          </div>
+          <div>
+            <label className="field" htmlFor="signup-confirm-password">Confirm password <span className="req">*</span></label>
+            <input id="signup-confirm-password" className="input" type="password" autoComplete="new-password" maxLength={128} value={f.confirmPassword} onChange={(e) => set("confirmPassword", e.target.value)} {...aria("confirmPassword")} />
+            {err("confirmPassword")}
+          </div>
+
           {role === "student" ? (
             <>
               <div className="span-2">
-                <label className="field" htmlFor="uscId">USC ID number <span className="req">*</span></label>
+                <label className="field" htmlFor="uscId">USC ID number <span className="optional">Optional</span></label>
                 <input id="uscId" className="input" inputMode="numeric" maxLength={12} placeholder="10 digits" value={f.uscId} onChange={(e) => set("uscId", e.target.value)} {...aria("uscId")} />
-                <p className="hint">Used only to confirm you're a current student. Clubs never see it.</p>
+                <p className="hint">An optional private profile detail. It does not verify enrollment; share it with a club only if you explicitly choose to.</p>
                 {err("uscId")}
               </div>
               <div>
@@ -128,7 +143,7 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
                 {err("standing")}
               </div>
               <div>
-                <span className="field" id="grad-label">Expected graduation <span className="req">*</span></span>
+                <span className="field" id="grad-label">Expected graduation <span className="optional">Optional</span></span>
                 <div className="row" style={{ gap: 8 }} role="group" aria-labelledby="grad-label">
                   <select className="input" aria-label="Semester" value={f.term} onChange={(e) => set("term", e.target.value)}>
                     <option>Spring</option>
@@ -168,14 +183,15 @@ export default function SignupForm({ role }: { role: "student" | "officer" }) {
           <input type="checkbox" checked={f.agree} onChange={(e) => set("agree", e.target.checked)} {...aria("agree")} />
           <span>
             {role === "student"
-              ? "Clubs I apply to can see my name, preferred name, pronouns, USC email, class and the profile I submit. My USC ID stays private."
-              : "I'm a current officer of this club. Campus Activities will confirm this against the club's officer list."}
+              ? "Clubs I apply to can see the profile I submit, including my name, preferred name, pronouns, USC email and class. My USC ID is optional and stays private unless I explicitly choose to share it with a club."
+              : "I'm requesting officer access for this club. I understand that club approval is required before I can review applications."}
           </span>
         </label>
         {err("agree")}
+        {err("submit")}
 
         <div className="auth-actions">
-          <button className="btn pill-red" type="submit">Create account</button>
+          <button className="btn pill-red" type="submit" disabled={pending}>{pending ? "Creating account…" : "Create account"}</button>
           <p className="subtle">Already have an account? <Link to={`/signin?as=${role}`} className="text-link">Sign in</Link></p>
         </div>
       </form>
